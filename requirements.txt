@@ -1,0 +1,14 @@
+streamlit
+langchain
+langchain-community
+langchain-groq
+langchain-openai
+python-dotenv
+beautifulsoup4
+pypdf
+unstructured
+fake_useragent
+youtube_transcript_api
+duckduckgo-search  # Para busca em tempo real com DuckDuckGo
+openai  # Para compatibilidade com os modelos da OpenAI
+groq  # Para integração com os modelos da Groq
