@@ -39,13 +39,19 @@ def carrega_csv(caminho):
         return f"Erro ao carregar CSV: {e}"
 
 def carrega_pdf(caminho):
-    """Carrega conteúdo de um arquivo PDF"""
+    """Carrega e extrai texto de um arquivo PDF."""
     try:
         loader = PyPDFLoader(caminho)
         documentos = loader.load()
-        return "\n\n".join([doc.page_content for doc in documentos]) or "PDF sem texto reconhecido."
+        texto_extraido = "\n\n".join([doc.page_content for doc in documentos])
+
+        if not texto_extraido.strip():
+            return "⚠️ O PDF foi carregado, mas não contém texto extraível."
+
+        return texto_extraido
+
     except Exception as e:
-        return f"Erro ao carregar PDF: {e}"
+        return f"❌ Erro ao carregar PDF: {e}"
 
 def carrega_txt(caminho):
     """Carrega conteúdo de um arquivo TXT"""
