@@ -1,50 +1,57 @@
 import os
-from time import sleep
+import time
 import streamlit as st
-from langchain_community.document_loaders import (WebBaseLoader,
-                                                  YoutubeLoader, 
-                                                  CSVLoader, 
-                                                  PyPDFLoader, 
-                                                  TextLoader)
+from langchain_community.document_loaders import (
+    WebBaseLoader,
+    YoutubeLoader,
+    CSVLoader,
+    PyPDFLoader,
+    TextLoader,
+)
 from fake_useragent import UserAgent
 
 def carrega_site(url):
-    documento = ''
-    for i in range(5):
-        try:
-            os.environ['USER_AGENT'] = UserAgent().random
-            loader = WebBaseLoader(url, raise_for_status=True)
-            lista_documentos = loader.load()
-            documento = '\n\n'.join([doc.page_content for doc in lista_documentos])
-            break
-        except:
-            print(f'Erro ao carregar o site {i+1}')
-            sleep(3)
-    if documento == '':
-        st.error('Não foi possível carregar o site')
-        st.stop()
-    return documento
+    """Carrega conteúdo de um site"""
+    try:
+        os.environ["USER_AGENT"] = UserAgent().random
+        loader = WebBaseLoader(url, raise_for_status=True)
+        documentos = loader.load()
+        return "\n\n".join([doc.page_content for doc in documentos]) or "Nenhum conteúdo extraído."
+    except Exception as e:
+        return f"Erro ao carregar site: {e}"
 
-def carrega_youtube(video_id):
-    loader = YoutubeLoader(video_id, add_video_info=False, language=['pt'])
-    lista_documentos = loader.load()
-    documento = '\n\n'.join([doc.page_content for doc in lista_documentos])
-    return documento
+def carrega_youtube(video_url):
+    """Carrega transcrição do YouTube"""
+    try:
+        loader = YoutubeLoader(video_url, add_video_info=False, language=["pt"])
+        documentos = loader.load()
+        return "\n\n".join([doc.page_content for doc in documentos]) or "Nenhuma legenda disponível."
+    except Exception as e:
+        return f"Erro ao carregar vídeo: {e}"
 
 def carrega_csv(caminho):
-    loader = CSVLoader(caminho)
-    lista_documentos = loader.load()
-    documento = '\n\n'.join([doc.page_content for doc in lista_documentos])
-    return documento
+    """Carrega conteúdo de um arquivo CSV"""
+    try:
+        loader = CSVLoader(caminho)
+        documentos = loader.load()
+        return "\n\n".join([doc.page_content for doc in documentos]) or "CSV vazio."
+    except Exception as e:
+        return f"Erro ao carregar CSV: {e}"
 
 def carrega_pdf(caminho):
-    loader = PyPDFLoader(caminho)
-    lista_documentos = loader.load()
-    documento = '\n\n'.join([doc.page_content for doc in lista_documentos])
-    return documento
+    """Carrega conteúdo de um arquivo PDF"""
+    try:
+        loader = PyPDFLoader(caminho)
+        documentos = loader.load()
+        return "\n\n".join([doc.page_content for doc in documentos]) or "PDF sem texto reconhecido."
+    except Exception as e:
+        return f"Erro ao carregar PDF: {e}"
 
 def carrega_txt(caminho):
-    loader = TextLoader(caminho)
-    lista_documentos = loader.load()
-    documento = '\n\n'.join([doc.page_content for doc in lista_documentos])
-    return documento
+    """Carrega conteúdo de um arquivo TXT"""
+    try:
+        loader = TextLoader(caminho)
+        documentos = loader.load()
+        return "\n\n".join([doc.page_content for doc in documentos]) or "Arquivo TXT vazio."
+    except Exception as e:
+        return f"Erro ao carregar TXT: {e}"
