@@ -74,7 +74,7 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     Aqui está o conteúdo do documento ({tipo_arquivo}) carregado:
 
     ###
-    {documento[:200000]}  # Limita para evitar sobrecarga de tokens
+    {documento[:2000]}  # Limita para evitar sobrecarga de tokens
     ###
 
     Responda com base nesse conteúdo.
