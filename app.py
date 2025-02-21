@@ -51,17 +51,23 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     if not api_key:
         st.error("⚠️ API Key não fornecida. Adicione uma chave válida para continuar.")
         return
-    
+
     documento = carrega_arquivos(tipo_arquivo, arquivo)
+
+    if documento.startswith("❌") or documento.startswith("⚠️"):
+        st.error(documento)
+        return
+
     system_message = f"""
-    Você é um assistente amigável chamado Oráculo.
-    Utilize as informações abaixo do documento ({tipo_arquivo}) para basear suas respostas:
-    
+    Você é um assistente chamado Oráculo.
+    Aqui está o conteúdo do documento ({tipo_arquivo}) carregado:
+
     ###
-    {documento}
+    {documento[:2000]}  # Limita para evitar mensagens longas
     ###
-    Sempre que houver "$" na saída, substitua por "S".
-    Se o documento contiver "Just a moment...Enable JavaScript and cookies to continue", peça para o usuário tentar novamente.
+
+    Responda com base nesse conteúdo. 
+    Se não conseguir acessar, informe ao usuário.
     """
 
     template = ChatPromptTemplate.from_messages([
@@ -73,6 +79,7 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     chat = CONFIG_MODELOS[provedor]["chat"](model=modelo, api_key=api_key)
     chain = template | chat
     st.session_state["chain"] = chain
+
 
 def pagina_chat():
     st.header("🤖 Bem-vindo ao Oráculo", divider=True)
