@@ -12,17 +12,18 @@ TIPOS_ARQUIVOS_VALIDOS = [
 
 CONFIG_MODELOS = {
     "Groq": {
-    "distil-whisper-large-v3-en",
-    "gemma2-9b-it",
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "llama-guard-3-8b",
-    "llama3-70b-8192",
-    "llama3-8b-8192",
-    "mixtral-8x7b-32768",
-    "whisper-large-v3",
-    "whisper-large-v3-turbo",
-    },
+        "modelos": [
+            "distil-whisper-large-v3-en",
+            "gemma2-9b-it",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "llama-guard-3-8b",
+            "llama3-70b-8192",
+            "llama3-8b-8192",
+            "mixtral-8x7b-32768",
+            "whisper-large-v3",
+            "whisper-large-v3-turbo",
+        ],
         "chat": ChatGroq,
     },
     "OpenAI": {
@@ -74,7 +75,7 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     Aqui está o conteúdo do documento ({tipo_arquivo}) carregado:
 
     ###
-    {documento[:2000]}  # Limita para evitar sobrecarga de tokens
+    {documento[:5000]}  # Limita para evitar sobrecarga de tokens
     ###
 
     Responda com base nesse conteúdo.
