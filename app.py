@@ -22,7 +22,7 @@ CONFIG_MODELOS = {
     "mixtral-8x7b-32768",
     "whisper-large-v3",
     "whisper-large-v3-turbo",
-        ],
+        ]
         "chat": ChatGroq,
     },
     "OpenAI": {
