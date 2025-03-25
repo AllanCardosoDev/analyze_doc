@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 TIPOS_ARQUIVOS_VALIDOS = [
-    "Site", "Youtube", "Pdf", "Docx", "Csv", "Txt"
+    "Site", "Pdf", "Docx", "Csv", "Txt"
 ]
 
 CONFIG_MODELOS = {
@@ -52,10 +52,6 @@ def carrega_arquivos(tipo_arquivo, arquivo):
     try:
         if tipo_arquivo == "Site":
             return carrega_site(arquivo)
-        elif tipo_arquivo == "Youtube":
-            # Obtém o proxy configurado, se existir
-            proxy = st.session_state.get("youtube_proxy", None)
-            return carrega_youtube(arquivo, proxy=proxy)
         elif tipo_arquivo == "Pdf":
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp:
                 temp.write(arquivo.read())
@@ -234,7 +230,7 @@ def sidebar():
     with tabs[0]:
         tipo_arquivo = st.selectbox("Selecione o tipo de arquivo", TIPOS_ARQUIVOS_VALIDOS)
         
-        if tipo_arquivo in ["Site", "Youtube"]:
+        if tipo_arquivo in ["Site"]:
             arquivo = st.text_input(f"Digite a URL do {tipo_arquivo.lower()}")
         else:
             if tipo_arquivo == "Docx":
@@ -287,22 +283,6 @@ def sidebar():
                   help="Analisa o tom emocional do documento (em breve)")
     
     with tabs[3]:
-        st.subheader("Configurações do YouTube")
-        proxy = st.text_input(
-            "Proxy para YouTube (formato: http://usuario:senha@host:porta)",
-            value=os.getenv("YOUTUBE_PROXY", ""),
-            help="Use um proxy para contornar bloqueios do YouTube"
-        )
-        if proxy:
-            st.session_state["youtube_proxy"] = proxy
-        
-        st.markdown("""
-        **Dica para o YouTube:**
-        Se você está enfrentando erros de "IP bloqueado", tente:
-        1. Usar um proxy (configure acima)
-        2. Usar uma VPN
-        3. Esperar algumas horas e tentar novamente
-        """)
         
         st.subheader("Preferências de interface")
         theme = st.selectbox("Tema", ["Claro", "Escuro"], key="theme")
