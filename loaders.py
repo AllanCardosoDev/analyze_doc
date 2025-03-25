@@ -27,12 +27,12 @@ def carrega_site(url):
     return documento
 
 def carrega_youtube(video_url):
-    """Carrega legendas de vídeos do YouTube com método alternativo."""
+    """Versão simplificada para carregar legendas do YouTube."""
     try:
-        # Importar diretamente a biblioteca para acessar a API
+        # Importar diretamente
         from youtube_transcript_api import YouTubeTranscriptApi
         
-        # Extrair o ID do vídeo da URL se necessário
+        # Limpeza e extração do ID do vídeo
         if "youtube.com" in video_url or "youtu.be" in video_url:
             if "v=" in video_url:
                 video_id = video_url.split("v=")[1].split("&")[0]
@@ -41,27 +41,33 @@ def carrega_youtube(video_url):
             else:
                 video_id = video_url
         else:
-            # Assumir que o input já é o ID
             video_id = video_url
             
-        # Obter transcrições diretamente
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
-        # Tentar primeiro legendas em português
+        # Tentativa direta de obter a transcrição sem usar list_transcripts
         try:
-            transcript = transcript_list.find_transcript(['pt'])
+            transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt', 'pt-BR'])
         except:
-            # Se não encontrar em português, pegar a que estiver disponível
             try:
-                transcript = transcript_list.find_generated_transcript(['pt', 'en'])
+                # Se não houver em português, tenta em inglês
+                transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
             except:
-                transcript = transcript_list[0]
-            
-        # Obter o texto completo
-        transcript_data = transcript.fetch()
-        texto_completo = " ".join([item['text'] for item in transcript_data])
+                # Última tentativa: qualquer idioma
+                transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
         
-        return texto_completo
+        # Processamento manual do resultado
+        if transcript_data and isinstance(transcript_data, list):
+            texto_legendas = ""
+            for item in transcript_data:
+                if isinstance(item, dict) and 'text' in item:
+                    texto_legendas += item['text'] + " "
+            
+            if texto_legendas:
+                return texto_legendas
+            else:
+                return "⚠️ Não foi possível extrair texto das legendas."
+        else:
+            return "⚠️ Formato de legenda desconhecido."
+            
     except Exception as e:
         return f"❌ Erro ao carregar YouTube: {e}"
 
