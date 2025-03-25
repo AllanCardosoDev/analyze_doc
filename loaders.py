@@ -26,11 +26,10 @@ def carrega_site(url):
         return "⚠️ Não foi possível carregar o site."
     return documento
 def carrega_youtube(video_id):
-    """Carrega legendas de vídeos do YouTube."""
-    try:
-        loader = YoutubeLoader(video_id, add_video_info=False, language=["pt"])
-        lista_documentos = loader.load()
-        return "\n\n".join([doc.page_content for doc in lista_documentos])
+    loader = YoutubeLoader(video_id, add_video_info=False, language=['pt'])
+    lista_documentos = loader.load()
+    documento = '\n\n'.join([doc.page_content for doc in lista_documentos])
+    return documento
     except Exception as e:
         return f"❌ Erro ao carregar YouTube: {e}"
 def carrega_csv(caminho):
