@@ -17,4 +17,4 @@ pillow
 scikit-learn
 langchainhub
 nltk
-fpdf
+fpdf==1.7.2
