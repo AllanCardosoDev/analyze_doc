@@ -7,6 +7,8 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from loaders import *
 from dotenv import load_dotenv
+import base64
+from datetime import datetime
 
 # Carregar variáveis de ambiente do arquivo .env
 load_dotenv()
@@ -14,9 +16,80 @@ load_dotenv()
 # Configurar título e página
 st.set_page_config(
     page_title="Analyse Doc - Analise documentos com IA",
-    page_icon="🤖",
+    page_icon="📑",
     layout="wide"
 )
+
+# Aplicar estilos CSS personalizados
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: 800;
+        color: #1E88E5;
+        text-align: center;
+        margin-bottom: 1rem;
+        padding-bottom: 1rem;
+        border-bottom: 2px solid #f0f2f6;
+    }
+    
+    .sub-header {
+        font-size: 1.5rem;
+        color: #424242;
+        margin-bottom: 1rem;
+    }
+    
+    .stButton>button {
+        background-color: #1E88E5;
+        color: white;
+        font-weight: bold;
+        border-radius: 5px;
+        border: none;
+        padding: 0.5rem 1rem;
+        transition: all 0.3s;
+    }
+    
+    .stButton>button:hover {
+        background-color: #1565C0;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+    
+    .document-info {
+        background-color: #E3F2FD;
+        border-radius: 5px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    
+    .chat-message-ai {
+        background-color: #E3F2FD;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 0.5rem;
+        border-left: 3px solid #1E88E5;
+    }
+    
+    .chat-message-human {
+        background-color: #F5F5F5;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 0.5rem;
+        border-left: 3px solid #616161;
+    }
+    
+    .sidebar-section {
+        background-color: #F5F5F5;
+        border-radius: 5px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    
+    /* Barra de carregamento personalizada */
+    .stProgress > div > div > div > div {
+        background-color: #1E88E5;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 TIPOS_ARQUIVOS_VALIDOS = [
     "Site", "Youtube", "Pdf", "Docx", "Csv", "Txt"
@@ -185,42 +258,141 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         chain = template | chat
         st.session_state["chain"] = chain
         st.session_state["documento_completo"] = documento
+        st.session_state["tipo_arquivo"] = tipo_arquivo
+        
+        # Guardar metadados do documento para referência
+        st.session_state["documento_meta"] = {
+            "tipo": tipo_arquivo,
+            "tamanho": len(documento),
+            "data_processamento": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "modelo": modelo,
+            "provedor": provedor
+        }
+        
         st.success(f"✅ Modelo {modelo} carregado com sucesso! Documento pronto para análise.")
     except Exception as e:
         st.error(f"❌ Erro ao carregar o modelo: {e}")
 
+def create_download_link(pdf_bytes, filename):
+    """Cria um link para download do PDF"""
+    b64 = base64.b64encode(pdf_bytes).decode()
+    href = f'<a href="data:application/pdf;base64,{b64}" download="{filename}" class="download-button">📥 Baixar PDF</a>'
+    return href
+
 def pagina_chat():
     """Cria a interface do chat e gerencia a conversa do usuário."""
-    st.header("🤖 Bem-vindo ao Analyse Doc", divider=True)
+    st.markdown('<h1 class="main-header">📑 Analyse Doc</h1>', unsafe_allow_html=True)
+    
+    # Exibir informações do documento se disponível
+    if "documento_meta" in st.session_state:
+        meta = st.session_state["documento_meta"]
+        with st.container():
+            st.markdown('<div class="document-info">', unsafe_allow_html=True)
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown(f"**Tipo:** {meta['tipo']}")
+                st.markdown(f"**Tamanho:** {meta['tamanho']} caracteres")
+            
+            with col2:
+                st.markdown(f"**Modelo:** {meta['modelo']}")
+                st.markdown(f"**Provedor:** {meta['provedor']}")
+            
+            with col3:
+                st.markdown(f"**Processado em:** {meta['data_processamento']}")
+                
+                # Botão para gerar resumo em PDF
+                if st.button("Gerar Resumo em PDF", key="btn_gerar_pdf", use_container_width=True):
+                    with st.spinner("Gerando resumo em PDF..."):
+                        try:
+                            # Obter o texto completo do documento
+                            documento = st.session_state.get("documento_completo", "")
+                            
+                            # Definir o comprimento máximo do resumo
+                            max_length = st.session_state.get("max_resumo_length", 1000)
+                            
+                            # Gerar o resumo
+                            resumo = gera_resumo(documento, max_length)
+                            
+                            # Gerar o PDF
+                            pdf_bytes = gera_pdf_resumo(
+                                resumo, 
+                                meta['tipo'], 
+                                meta['data_processamento']
+                            )
+                            
+                            # Criar link de download
+                            filename = f"resumo_{meta['tipo']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                            download_link = create_download_link(pdf_bytes, filename)
+                            st.markdown(download_link, unsafe_allow_html=True)
+                            
+                            # Guardar o resumo na sessão para uso posterior
+                            st.session_state["resumo_documento"] = resumo
+                            
+                        except Exception as e:
+                            st.error(f"Erro ao gerar o PDF: {e}")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
     
     chain = st.session_state.get("chain")
     if chain is None:
         st.info("📚 Carregue um documento e inicialize o Analyse Doc para começar.")
+        
+        # Adicionar demonstração visual
+        st.markdown("""
+        <div style="text-align: center; padding: 20px; background-color: #f8f9fa; border-radius: 10px; margin: 20px 0;">
+            <img src="https://cdn.pixabay.com/photo/2016/12/23/07/01/documents-1926996_960_720.png" width="200">
+            <h3>Como usar o Analyse Doc</h3>
+            <ol style="text-align: left; display: inline-block;">
+                <li>Na barra lateral, selecione a aba <b>Upload de Arquivos</b></li>
+                <li>Escolha o tipo de documento e faça o upload</li>
+                <li>Na aba <b>Seleção de Modelos</b>, escolha o provedor e o modelo</li>
+                <li>Clique em <b>Inicializar Analyse Doc</b></li>
+                <li>Comece a fazer perguntas sobre o documento</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
+        
         st.stop()
     
     memoria = st.session_state.get("memoria", ConversationBufferMemory())
     
-    # Exibir histórico de mensagens
+    # Exibir histórico de mensagens com estilo melhorado
     for mensagem in memoria.buffer_as_messages:
-        st.chat_message(mensagem.type).markdown(mensagem.content)
+        if mensagem.type == "ai":
+            st.markdown(f'<div class="chat-message-ai">{mensagem.content}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="chat-message-human">{mensagem.content}</div>', unsafe_allow_html=True)
     
     # Campo de entrada do usuário
     input_usuario = st.chat_input("Fale com o Analyse Doc sobre o documento carregado")
     
     if input_usuario:
-        st.chat_message("human").markdown(input_usuario)
+        st.markdown(f'<div class="chat-message-human">{input_usuario}</div>', unsafe_allow_html=True)
         
         try:
-            with st.chat_message("ai"):
+            with st.spinner("Pensando..."):
                 resposta_stream = chain.stream({
                     "input": input_usuario,
                     "chat_history": memoria.buffer_as_messages
                 })
-                resposta = st.write_stream(resposta_stream)
+                
+                placeholder = st.container()
+                resposta_texto = ""
+                
+                # Exibição da resposta em stream com uma aparência melhor
+                with placeholder:
+                    message_placeholder = st.empty()
+                    for chunk in resposta_stream:
+                        resposta_texto += chunk
+                        message_placeholder.markdown(
+                            f'<div class="chat-message-ai">{resposta_texto}</div>', 
+                            unsafe_allow_html=True
+                        )
             
             # Adicionar à memória
             memoria.chat_memory.add_user_message(input_usuario)
-            memoria.chat_memory.add_ai_message(resposta)
+            memoria.chat_memory.add_ai_message(resposta_texto)
             st.session_state["memoria"] = memoria
             
         except Exception as e:
@@ -228,27 +400,63 @@ def pagina_chat():
 
 def sidebar():
     """Cria a barra lateral para upload de arquivos e seleção de modelos."""
-    st.sidebar.title("🛠️ Configurações")
+    st.sidebar.markdown('<h2 style="text-align: center; color: #1E88E5;">🛠️ Configurações</h2>', unsafe_allow_html=True)
     tabs = st.sidebar.tabs(["Upload de Arquivos", "Seleção de Modelos", "Processamento", "Configurações"])
     
     with tabs[0]:
-        tipo_arquivo = st.selectbox("Selecione o tipo de arquivo", TIPOS_ARQUIVOS_VALIDOS)
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.markdown("### 📁 Upload de Arquivos")
+        tipo_arquivo = st.selectbox(
+            "Selecione o tipo de arquivo", 
+            TIPOS_ARQUIVOS_VALIDOS,
+            help="Escolha o tipo de arquivo que deseja analisar"
+        )
         
         if tipo_arquivo in ["Site", "Youtube"]:
-            arquivo = st.text_input(f"Digite a URL do {tipo_arquivo.lower()}")
+            arquivo = st.text_input(
+                f"Digite a URL do {tipo_arquivo.lower()}", 
+                placeholder=f"https://exemplo.com" if tipo_arquivo == "Site" else "https://youtube.com/watch?v=ID_VIDEO"
+            )
         else:
             if tipo_arquivo == "Docx":
-                arquivo = st.file_uploader(f"Faça o upload do arquivo {tipo_arquivo.lower()}", type=["docx"])
+                arquivo = st.file_uploader(
+                    f"Faça o upload do arquivo {tipo_arquivo.lower()}", 
+                    type=["docx"],
+                    help="Arquivos do Microsoft Word (.docx)"
+                )
             elif tipo_arquivo == "Pdf":
-                arquivo = st.file_uploader(f"Faça o upload do arquivo {tipo_arquivo.lower()}", type=["pdf"])
+                arquivo = st.file_uploader(
+                    f"Faça o upload do arquivo {tipo_arquivo.lower()}", 
+                    type=["pdf"],
+                    help="Documentos PDF (.pdf)"
+                )
             elif tipo_arquivo == "Csv":
-                arquivo = st.file_uploader(f"Faça o upload do arquivo {tipo_arquivo.lower()}", type=["csv"])
+                arquivo = st.file_uploader(
+                    f"Faça o upload do arquivo {tipo_arquivo.lower()}", 
+                    type=["csv"],
+                    help="Planilhas em formato CSV (.csv)"
+                )
             elif tipo_arquivo == "Txt":
-                arquivo = st.file_uploader(f"Faça o upload do arquivo {tipo_arquivo.lower()}", type=["txt"])
+                arquivo = st.file_uploader(
+                    f"Faça o upload do arquivo {tipo_arquivo.lower()}", 
+                    type=["txt"],
+                    help="Arquivos de texto plano (.txt)"
+                )
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with tabs[1]:
-        provedor = st.selectbox("Selecione o provedor do modelo", list(CONFIG_MODELOS.keys()))
-        modelo = st.selectbox("Selecione o modelo", CONFIG_MODELOS[provedor]["modelos"])
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.markdown("### 🤖 Seleção de Modelos")
+        provedor = st.selectbox(
+            "Selecione o provedor do modelo", 
+            list(CONFIG_MODELOS.keys()),
+            help="Escolha o provedor do modelo de IA"
+        )
+        modelo = st.selectbox(
+            "Selecione o modelo", 
+            CONFIG_MODELOS[provedor]["modelos"],
+            help="Escolha o modelo específico para usar"
+        )
         
         # Obter API key das variáveis de ambiente, se disponível
         default_api_key = ""
@@ -260,34 +468,58 @@ def sidebar():
         api_key = st.text_input(
             f"Adicione a API key para {provedor}",
             type="password",
-            value=default_api_key
+            value=default_api_key,
+            help=f"Sua chave de API para {provedor}. Será salva apenas nesta sessão."
         )
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with tabs[2]:
-        st.subheader("Processamento avançado")
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.markdown("### ⚙️ Processamento avançado")
         
-        st.checkbox("Gerar resumo automático", key="gerar_resumo", 
-                  help="Cria um resumo do documento antes de processar")
+        st.checkbox(
+            "Gerar resumo automático", 
+            key="gerar_resumo", 
+            help="Cria um resumo do documento antes de processar"
+        )
         
-        st.slider("Comprimento máximo do resumo", 500, 5000, 1000, key="max_resumo_length",
-                help="Número máximo de caracteres no resumo")
+        st.slider(
+            "Comprimento máximo do resumo", 
+            500, 5000, 1000, 
+            key="max_resumo_length",
+            help="Número máximo de caracteres no resumo"
+        )
         
         idiomas = {"Português": "pt", "Inglês": "en", "Espanhol": "es", "Francês": "fr"}
-        idioma_selecionado = st.selectbox("Idioma de saída", list(idiomas.keys()), key="idioma_saida",
-                               help="Traduzir o conteúdo para este idioma")
+        idioma_selecionado = st.selectbox(
+            "Idioma de saída", 
+            list(idiomas.keys()), 
+            key="idioma_saida",
+            help="Traduzir o conteúdo para este idioma"
+        )
         st.session_state["idioma_codigo"] = idiomas[idioma_selecionado]
         
         # Verificar se a tradução está disponível (exige um modelo de LLM)
         st.session_state["tradutor_disponivel"] = False  # Por padrão, não disponível
         
-        st.checkbox("Extrair entidades", key="extrair_entidades", disabled=True,
-                  help="Identifica nomes, organizações e outras entidades (em breve)")
+        st.checkbox(
+            "Extrair entidades", 
+            key="extrair_entidades", 
+            disabled=True,
+            help="Identifica nomes, organizações e outras entidades (em breve)"
+        )
         
-        st.checkbox("Análise de sentimento", key="analise_sentimento", disabled=True,
-                  help="Analisa o tom emocional do documento (em breve)")
+        st.checkbox(
+            "Análise de sentimento", 
+            key="analise_sentimento", 
+            disabled=True,
+            help="Analisa o tom emocional do documento (em breve)"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with tabs[3]:
-        st.subheader("Configurações do YouTube")
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.markdown("### 🌐 Configurações do YouTube")
         proxy = st.text_input(
             "Proxy para YouTube (formato: http://usuario:senha@host:porta)",
             value=os.getenv("YOUTUBE_PROXY", ""),
@@ -304,8 +536,13 @@ def sidebar():
         3. Esperar algumas horas e tentar novamente
         """)
         
-        st.subheader("Preferências de interface")
-        theme = st.selectbox("Tema", ["Claro", "Escuro"], key="theme")
+        st.markdown("### 🎨 Preferências de interface")
+        theme = st.selectbox(
+            "Tema", 
+            ["Claro", "Escuro"], 
+            key="theme",
+            help="Escolha o tema da interface"
+        )
         if theme == "Escuro":
             st.markdown(
                 """
@@ -318,12 +555,29 @@ def sidebar():
                         background-color: #2D2D2D;
                         color: #FFFFFF;
                     }
+                    .document-info {
+                        background-color: #2D2D2D;
+                    }
+                    .chat-message-ai {
+                        background-color: #1E1E1E;
+                        border-left: 3px solid #64B5F6;
+                    }
+                    .chat-message-human {
+                        background-color: #2D2D2D;
+                    }
+                    .sidebar-section {
+                        background-color: #2D2D2D;
+                    }
+                    .main-header {
+                        color: #64B5F6;
+                    }
                 </style>
                 """,
                 unsafe_allow_html=True
             )
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    col1, col2 = st.columns(2)
+    col1, col2 = st.sidebar.columns(2)
     
     with col1:
         if st.button("Inicializar Analyse Doc", use_container_width=True):
@@ -331,17 +585,21 @@ def sidebar():
                 # Verificar se devemos processar o documento
                 if st.session_state.get("gerar_resumo", False) and arquivo:
                     documento = carrega_arquivos(tipo_arquivo, arquivo)
-                    if not documento.startswith("❌") and not documento.startswith("⚠️"):
+                    if not (isinstance(documento, str) and (documento.startswith("❌") or documento.startswith("⚠️"))):
                         st.info("Gerando resumo do documento...")
+                        # Corrigido: obter max_length corretamente da session_state
                         max_length = st.session_state.get("max_resumo_length", 1000)
-                        documento = gera_resumo(documento, max_length)
-                        st.session_state["documento_processado"] = documento
+                        try:
+                            documento = gera_resumo(documento, max_length)
+                            st.session_state["documento_processado"] = documento
+                        except Exception as e:
+                            st.error(f"Erro ao gerar resumo: {e}")
                 
                 # Inicia o modelo normalmente
                 carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
     
     with col2:
-        if st.button("Apagar Histórico de Conversa", use_container_width=True):
+        if st.button("Apagar Histórico", use_container_width=True):
             st.session_state["memoria"] = ConversationBufferMemory()
             st.success("✅ Histórico de conversa apagado!")
 
