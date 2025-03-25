@@ -7,14 +7,31 @@ from langchain.prompts import ChatPromptTemplate
 from loaders import *
 
 TIPOS_ARQUIVOS_VALIDOS = [
-    'Site', 'Youtube', 'Pdf', 'Csv', 'Txt'
+    "Site", "Youtube", "Pdf", "Csv", "Txt"
 ]
-CONFIG_MODELOS = {'Groq':
-                        {'modelos': ['llama-3.1-70b-versatile', 'gemma2-9b-it', 'mixtral-8x7b-32768'],
-                         'chat': ChatGroq},
-                  'OpenAI':
-                        {'modelos': ['gpt-4o-mini', 'gpt-4o', 'o1-preview', 'o1-mini'],
-                         'chat': ChatOpenAI}}
+
+CONFIG_MODELOS = {
+    "Groq": {
+        "modelos": [
+            "distil-whisper-large-v3-en",
+            "gemma2-9b-it",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "llama-guard-3-8b",
+            "llama3-70b-8192",
+            "llama3-8b-8192",
+            "mixtral-8x7b-32768",
+            "whisper-large-v3",
+            "whisper-large-v3-turbo",
+        ],
+        "chat": ChatGroq,
+    },
+    "OpenAI": {
+        "modelos": ["gpt-4o-mini", "gpt-4o", "o1-preview", "o1-mini"],
+        "chat": ChatOpenAI,
+    },
+}
+
 MEMORIA = ConversationBufferMemory()
 def carrega_arquivos(tipo_arquivo, arquivo):
     if tipo_arquivo == 'Site':
