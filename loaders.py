@@ -11,6 +11,10 @@ from fake_useragent import UserAgent
 from docx import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document as LangchainDocument
+import tempfile
+from fpdf import FPDF
+from datetime import datetime
+import io
 
 def carrega_site(url):
     """Carrega texto de um site usando WebBaseLoader."""
@@ -240,7 +244,7 @@ def gera_resumo(texto, max_length=1000):
         return resumo
     except Exception as e:
         print(f"Erro ao gerar resumo: {e}")
-        return "Não foi possível gerar um resumo automático. Usando documento original."
+        return f"Não foi possível gerar um resumo automático. Erro: {e}"
 
 def traduz_texto(texto, idioma_destino='pt'):
     """
@@ -268,3 +272,71 @@ def traduz_texto(texto, idioma_destino='pt'):
     except Exception as e:
         print(f"Erro ao traduzir texto: {e}")
         return f"Não foi possível traduzir o texto. Usando original. Erro: {e}"
+
+def gera_pdf_resumo(texto_resumo, tipo_documento, data_processamento):
+    """
+    Gera um PDF com o resumo do documento.
+    
+    Args:
+        texto_resumo: Texto resumido a ser incluído no PDF
+        tipo_documento: Tipo do documento original (PDF, DOCX, etc.)
+        data_processamento: Data/hora do processamento
+        
+    Returns:
+        bytes: Conteúdo do PDF em bytes
+    """
+    class PDF(FPDF):
+        def header(self):
+            # Logo
+            self.set_font('Arial', 'B', 15)
+            self.cell(0, 10, 'Analyse Doc - Resumo de Documento', 0, 1, 'C')
+            self.ln(4)
+            
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Arial', 'I', 8)
+            self.cell(0, 10, f'Página {self.page_no()}/{{nb}}', 0, 0, 'C')
+            
+    # Criar objeto PDF
+    pdf = PDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    
+    # Adicionar metadados
+    pdf.set_author('Analyse Doc')
+    pdf.set_title(f'Resumo de Documento {tipo_documento}')
+    pdf.set_creator('Analyse Doc')
+    
+    # Informações do documento
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 10, 'Informações do Documento:', 0, 1)
+    
+    pdf.set_font('Arial', '', 11)
+    pdf.cell(0, 8, f'Tipo: {tipo_documento}', 0, 1)
+    pdf.cell(0, 8, f'Data de Processamento: {data_processamento}', 0, 1)
+    pdf.cell(0, 8, f'Tamanho do Resumo: {len(texto_resumo)} caracteres', 0, 1)
+    
+    # Adicionar linha separadora
+    pdf.line(10, pdf.get_y() + 5, 200, pdf.get_y() + 5)
+    pdf.ln(10)
+    
+    # Título do resumo
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'Resumo do Conteúdo:', 0, 1)
+    pdf.ln(4)
+    
+    # Conteúdo do resumo
+    pdf.set_font('Arial', '', 12)
+    
+    # Quebrar o texto em múltiplas linhas para caber na página
+    pdf.multi_cell(0, 6, texto_resumo)
+    
+    # Adicionar aviso sobre resumo automático
+    pdf.ln(10)
+    pdf.set_font('Arial', 'I', 10)
+    pdf.multi_cell(0, 5, 'Nota: Este resumo foi gerado automaticamente e pode não representar completamente o conteúdo original do documento.')
+    
+    # Retornar o PDF em bytes
+    pdf_output = io.BytesIO()
+    pdf.output(pdf_output)
+    return pdf_output.getvalue()
