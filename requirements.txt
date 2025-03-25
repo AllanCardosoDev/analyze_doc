@@ -15,5 +15,4 @@ groq
 python-docx
 pillow
 scikit-learn
-langchainhub
 nltk
