@@ -12,3 +12,9 @@ youtube_transcript_api
 duckduckgo-search # Para busca em tempo real com DuckDuckGo
 openai # Para compatibilidade com os modelos da OpenAI
 groq # Para integração com os modelos da Groq
+python-docx # Para processamento de arquivos DOCX
+pytesseract # Para OCR (opcional, comentado por enquanto)
+# Pillow # Para processamento de imagens com OCR
+scikit-learn # Para extração de entidades e análise de texto
+langchainhub # Para recursos adicionais do LangChain
+nltk # Para processamento natural de linguagem
