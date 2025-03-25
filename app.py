@@ -5,10 +5,12 @@ from langchain.memory import ConversationBufferMemory
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from loaders import *
+from loaders import carrega_site, carrega_youtube, carrega_pdf, carrega_docx, carrega_csv, carrega_txt
+from loaders import gera_resumo, gera_pdf_resumo, traduz_texto
 from dotenv import load_dotenv
 import base64
 from datetime import datetime
+import traceback
 
 # Carregar variáveis de ambiente do arquivo .env
 load_dotenv()
@@ -399,6 +401,9 @@ def pagina_chat():
                     if st.button("📥 Baixar Resumo em PDF", key="btn_gerar_pdf", use_container_width=True):
                         with st.spinner("Gerando resumo em PDF..."):
                             try:
+                                # Importar funções explicitamente
+                                from loaders import gera_resumo, gera_pdf_resumo
+                                
                                 # Obter o texto completo do documento
                                 documento = st.session_state.get("documento_completo", "")
                                 
@@ -425,6 +430,7 @@ def pagina_chat():
                                 
                             except Exception as e:
                                 st.error(f"Erro ao gerar o PDF: {e}")
+                                st.error(f"Detalhes: {traceback.format_exc()}")
                 
                 st.caption("O resumo em PDF contém os principais pontos do documento analisado, formatados para leitura e compartilhamento.")
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -690,9 +696,11 @@ def sidebar():
                     documento = carrega_arquivos(tipo_arquivo, arquivo)
                     if not (isinstance(documento, str) and (documento.startswith("❌") or documento.startswith("⚠️"))):
                         with st.spinner("Gerando resumo em PDF do documento..."):
-                            # Corrigido: obter max_length corretamente da session_state
-                            max_length = st.session_state.get("max_resumo_length", 1000)
                             try:
+                                # Corrigido: obter max_length corretamente da session_state e importar funções necessárias
+                                from loaders import gera_resumo, gera_pdf_resumo
+                                max_length = st.session_state.get("max_resumo_length", 1000)
+                                
                                 # Gerar resumo
                                 resumo = gera_resumo(documento, max_length)
                                 st.session_state["documento_processado"] = resumo
@@ -712,6 +720,8 @@ def sidebar():
                                 st.success("✅ Resumo em PDF gerado com sucesso! O link para download estará disponível após a inicialização.")
                             except Exception as e:
                                 st.error(f"Erro ao gerar resumo em PDF: {e}")
+                                import traceback
+                                st.error(f"Detalhes: {traceback.format_exc()}")
                 
                 # Inicia o modelo normalmente
                 carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
