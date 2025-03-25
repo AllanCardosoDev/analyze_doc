@@ -8,6 +8,7 @@ from langchain_community.document_loaders import (
     TextLoader
 )
 from fake_useragent import UserAgent
+import unicodedata
 
 def carrega_site(url):
     """Carrega texto de um site usando WebBaseLoader."""
@@ -76,22 +77,59 @@ def carrega_youtube(video_url):
     except Exception as e:
         return f"❌ Erro ao carregar YouTube: {e}"
 
+def limpa_texto(texto_bruto):
+    """Função auxiliar para limpar texto com problemas de codificação."""
+    # Normaliza o texto para remover caracteres problemáticos
+    texto_normalizado = unicodedata.normalize('NFKD', texto_bruto)
+    
+    # Remove caracteres não-ASCII
+    texto_limpo = ''
+    for char in texto_normalizado:
+        if ord(char) < 128 or char.isspace():
+            texto_limpo += char
+        else:
+            # Substitui caracteres não-ASCII por espaço ou equivalente ASCII quando possível
+            if char in 'áàãâäåæ':
+                texto_limpo += 'a'
+            elif char in 'éèêë':
+                texto_limpo += 'e'
+            elif char in 'íìîï':
+                texto_limpo += 'i'
+            elif char in 'óòõôöø':
+                texto_limpo += 'o'
+            elif char in 'úùûü':
+                texto_limpo += 'u'
+            elif char in 'ç':
+                texto_limpo += 'c'
+            elif char in 'ñ':
+                texto_limpo += 'n'
+            else:
+                texto_limpo += ' '
+    
+    return texto_limpo
+
 def carrega_csv(caminho):
     """Carrega dados de arquivos CSV."""
     try:
         loader = CSVLoader(caminho)
         lista_documentos = loader.load()
-        return "\n\n".join([doc.page_content for doc in lista_documentos])
+        texto = "\n\n".join([doc.page_content for doc in lista_documentos])
+        return limpa_texto(texto)
     except Exception as e:
         return f"❌ Erro ao carregar CSV: {e}"
 
 def carrega_pdf(caminho):
-    """Carrega e extrai texto de um PDF."""
+    """Carrega e extrai texto de um PDF com tratamento de codificação."""
     try:
         loader = PyPDFLoader(caminho)
         documentos = loader.load()
         texto = "\n\n".join([doc.page_content for doc in documentos])
-        return texto if texto.strip() else "⚠️ O PDF não contém texto extraível."
+        
+        if not texto.strip():
+            return "⚠️ O PDF não contém texto extraível."
+        
+        # Limpa o texto para evitar problemas de codificação
+        return limpa_texto(texto)
     except Exception as e:
         return f"❌ Erro ao carregar PDF: {e}"
 
@@ -100,6 +138,7 @@ def carrega_txt(caminho):
     try:
         loader = TextLoader(caminho)
         lista_documentos = loader.load()
-        return "\n\n".join([doc.page_content for doc in lista_documentos])
+        texto = "\n\n".join([doc.page_content for doc in lista_documentos])
+        return limpa_texto(texto)
     except Exception as e:
         return f"❌ Erro ao carregar TXT: {e}"
