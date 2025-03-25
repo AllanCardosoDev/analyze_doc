@@ -40,7 +40,9 @@ def carrega_arquivos(tipo_arquivo, arquivo):
         if tipo_arquivo == "Site":
             return carrega_site(arquivo)
         elif tipo_arquivo == "Youtube":
-            return carrega_youtube(arquivo)
+            # Obtém o proxy configurado, se existir
+            proxy = st.session_state.get("youtube_proxy", None)
+            return carrega_youtube(arquivo, proxy=proxy)
         elif tipo_arquivo == "Pdf":
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp:
                 temp.write(arquivo.read())
@@ -113,7 +115,7 @@ def pagina_chat():
 
 def sidebar():
     """Cria a barra lateral para upload de arquivos e seleção de modelos."""
-    tabs = st.tabs(["Upload de Arquivos", "Seleção de Modelos"])
+    tabs = st.tabs(["Upload de Arquivos", "Seleção de Modelos", "Configurações"])
     
     with tabs[0]:
         tipo_arquivo = st.selectbox("Selecione o tipo de arquivo", TIPOS_ARQUIVOS_VALIDOS)
@@ -126,6 +128,23 @@ def sidebar():
         provedor = st.selectbox("Selecione o provedor do modelo", list(CONFIG_MODELOS.keys()))
         modelo = st.selectbox("Selecione o modelo", CONFIG_MODELOS[provedor]["modelos"])
         api_key = st.text_input(f"Adicione a API key para {provedor}", type="password")
+    
+    with tabs[2]:
+        st.subheader("Configurações do YouTube")
+        proxy = st.text_input(
+            "Proxy para YouTube (formato: http://usuario:senha@host:porta)",
+            help="Use um proxy para contornar bloqueios do YouTube"
+        )
+        if proxy:
+            st.session_state["youtube_proxy"] = proxy
+        
+        st.markdown("""
+        **Dica para o YouTube:**
+        Se você está enfrentando erros de "IP bloqueado", tente:
+        1. Usar um proxy (configure acima)
+        2. Usar uma VPN
+        3. Esperar algumas horas e tentar novamente
+        """)
     
     if st.button("Inicializar Analyse Doc", use_container_width=True):
         carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
