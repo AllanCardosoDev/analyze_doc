@@ -56,19 +56,6 @@ def carrega_arquivos(tipo_arquivo, arquivo):
     except Exception as e:
         return f"❌ Erro ao carregar arquivo: {e}"
 
-def sanitize_text(text):
-    """Sanitiza o texto para evitar problemas de codificação."""
-    import unicodedata
-    import re
-    
-    # Normaliza e remove acentos
-    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
-    
-    # Remove caracteres que não são ASCII imprimíveis
-    text = re.sub(r'[^\x20-\x7E]', '', text)
-    
-    return text
-
 def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     """Carrega o modelo de IA e prepara o sistema para responder com base no documento."""
     if not api_key:
@@ -76,19 +63,15 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         return
     
     documento = carrega_arquivos(tipo_arquivo, arquivo)
-    if isinstance(documento, str) and (documento.startswith("❌") or documento.startswith("⚠️")):
+    if documento.startswith("❌") or documento.startswith("⚠️"):
         st.error(documento)
         return
-    
-    # Limita e sanitiza o documento para evitar problemas de codificação
-    documento_limitado = documento[:10000]  # Limita para 10k caracteres para evitar exceder limites de tokens
-    documento_sanitizado = sanitize_text(documento_limitado)
     
     system_message = f"""
     Você é um assistente chamado Analyse Doc.
     Aqui está o conteúdo do documento ({tipo_arquivo}) carregado:
     ###
-    {documento_sanitizado}
+    {documento[:2000]} # Limita para evitar sobrecarga de tokens
     ###
     Responda com base nesse conteúdo.
     Se não conseguir acessar, informe ao usuário.
@@ -120,21 +103,13 @@ def pagina_chat():
     input_usuario = st.chat_input("Fale com o Analyse Doc")
     if input_usuario:
         st.chat_message("human").markdown(input_usuario)
-        
-        try:
-            # Sanitiza a entrada do usuário também
-            input_sanitizado = sanitize_text(input_usuario)
-            
-            resposta = st.chat_message("ai").write_stream(chain.stream({
-                "input": input_sanitizado,
-                "chat_history": memoria.buffer_as_messages
-            }))
-            
-            memoria.chat_memory.add_user_message(input_usuario)
-            memoria.chat_memory.add_ai_message(resposta)
-            st.session_state["memoria"] = memoria
-        except Exception as e:
-            st.error(f"Ocorreu um erro ao processar sua solicitação: {str(e)}")
+        resposta = st.chat_message("ai").write_stream(chain.stream({
+            "input": input_usuario,
+            "chat_history": memoria.buffer_as_messages
+        }))
+        memoria.chat_memory.add_user_message(input_usuario)
+        memoria.chat_memory.add_ai_message(resposta)
+        st.session_state["memoria"] = memoria
 
 def sidebar():
     """Cria a barra lateral para upload de arquivos e seleção de modelos."""
