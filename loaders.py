@@ -9,6 +9,7 @@ from langchain_community.document_loaders import (
     TextLoader
 )
 from fake_useragent import UserAgent
+
 def carrega_site(url):
     """Carrega texto de um site usando WebBaseLoader."""
     documento = ""
@@ -25,18 +26,26 @@ def carrega_site(url):
     if not documento:
         return "⚠️ Não foi possível carregar o site."
     return documento
+
 def carrega_youtube(video_id):
-    loader = YoutubeLoader(video_id, add_video_info=False, language=['pt'])
-    lista_documentos = loader.load()
-    documento = '\n\n'.join([doc.page_content for doc in lista_documentos])
-    return documento
+    """Carrega legendas de vídeos do YouTube."""
+    try:
+        loader = YoutubeLoader(video_id, add_video_info=False, language=['pt'])
+        lista_documentos = loader.load()
+        documento = '\n\n'.join([doc.page_content for doc in lista_documentos])
+        return documento
     except Exception as e:
         return f"❌ Erro ao carregar YouTube: {e}"
+
 def carrega_csv(caminho):
     """Carrega dados de arquivos CSV."""
-    loader = CSVLoader(caminho)
-    lista_documentos = loader.load()
-    return "\n\n".join([doc.page_content for doc in lista_documentos])
+    try:
+        loader = CSVLoader(caminho)
+        lista_documentos = loader.load()
+        return "\n\n".join([doc.page_content for doc in lista_documentos])
+    except Exception as e:
+        return f"❌ Erro ao carregar CSV: {e}"
+
 def carrega_pdf(caminho):
     """Carrega e extrai texto de um PDF."""
     try:
@@ -46,8 +55,12 @@ def carrega_pdf(caminho):
         return texto if texto.strip() else "⚠️ O PDF não contém texto extraível."
     except Exception as e:
         return f"❌ Erro ao carregar PDF: {e}"
+
 def carrega_txt(caminho):
     """Carrega e extrai texto de um arquivo TXT."""
-    loader = TextLoader(caminho)
-    lista_documentos = loader.load()
-    return "\n\n".join([doc.page_content for doc in lista_documentos])
+    try:
+        loader = TextLoader(caminho)
+        lista_documentos = loader.load()
+        return "\n\n".join([doc.page_content for doc in lista_documentos])
+    except Exception as e:
+        return f"❌ Erro ao carregar TXT: {e}"
