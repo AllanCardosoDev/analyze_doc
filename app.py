@@ -1,5 +1,7 @@
 import tempfile
 import streamlit as st
+import unicodedata
+import re
 from langchain.memory import ConversationBufferMemory
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
@@ -34,6 +36,22 @@ CONFIG_MODELOS = {
 
 MEMORIA = ConversationBufferMemory()
 
+def sanitize_text(text):
+    """Sanitiza o texto para evitar problemas de codificação."""
+    if not isinstance(text, str):
+        return str(text)
+    
+    # Normalização Unicode
+    text = unicodedata.normalize('NFKD', text)
+    
+    # Remove caracteres não-ASCII
+    text = re.sub(r'[^\x00-\x7F]+', ' ', text)
+    
+    # Remove caracteres de controle, mantendo quebras de linha e tabs
+    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
+    
+    return text
+
 def carrega_arquivos(tipo_arquivo, arquivo):
     """Função para carregar arquivos com tratamento de erros."""
     try:
@@ -63,80 +81,23 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         return
     
     documento = carrega_arquivos(tipo_arquivo, arquivo)
-    if documento.startswith("❌") or documento.startswith("⚠️"):
+    if isinstance(documento, str) and (documento.startswith("❌") or documento.startswith("⚠️")):
         st.error(documento)
         return
+    
+    # Sanitizando o documento para evitar problemas de codificação
+    documento_sanitizado = sanitize_text(documento)
+    
+    # Limitar o tamanho do documento para evitar problemas
+    max_chars = 1500  # Ajuste conforme necessário
+    documento_truncado = documento_sanitizado[:max_chars] if len(documento_sanitizado) > max_chars else documento_sanitizado
     
     system_message = f"""
     Você é um assistente chamado Analyse Doc.
     Aqui está o conteúdo do documento ({tipo_arquivo}) carregado:
     ###
-    {documento[:2000]} # Limita para evitar sobrecarga de tokens
+    {documento_truncado}
     ###
     Responda com base nesse conteúdo.
     Se não conseguir acessar, informe ao usuário.
-    """
     
-    template = ChatPromptTemplate.from_messages([
-        ("system", system_message),
-        ("placeholder", "{chat_history}"),
-        ("user", "{input}")
-    ])
-    
-    chat = CONFIG_MODELOS[provedor]["chat"](model=modelo, api_key=api_key)
-    chain = template | chat
-    st.session_state["chain"] = chain
-
-def pagina_chat():
-    """Cria a interface do chat e gerencia a conversa do usuário."""
-    st.header("🤖 Bem-vindo ao Analyse Doc", divider=True)
-    
-    chain = st.session_state.get("chain")
-    if chain is None:
-        st.error("Carregue o Analyse Doc primeiro.")
-        st.stop()
-    
-    memoria = st.session_state.get("memoria", MEMORIA)
-    for mensagem in memoria.buffer_as_messages:
-        st.chat_message(mensagem.type).markdown(mensagem.content)
-    
-    input_usuario = st.chat_input("Fale com o Analyse Doc")
-    if input_usuario:
-        st.chat_message("human").markdown(input_usuario)
-        resposta = st.chat_message("ai").write_stream(chain.stream({
-            "input": input_usuario,
-            "chat_history": memoria.buffer_as_messages
-        }))
-        memoria.chat_memory.add_user_message(input_usuario)
-        memoria.chat_memory.add_ai_message(resposta)
-        st.session_state["memoria"] = memoria
-
-def sidebar():
-    """Cria a barra lateral para upload de arquivos e seleção de modelos."""
-    tabs = st.tabs(["Upload de Arquivos", "Seleção de Modelos"])
-    
-    with tabs[0]:
-        tipo_arquivo = st.selectbox("Selecione o tipo de arquivo", TIPOS_ARQUIVOS_VALIDOS)
-        if tipo_arquivo in ["Site", "Youtube"]:
-            arquivo = st.text_input(f"Digite a URL do {tipo_arquivo.lower()}")
-        else:
-            arquivo = st.file_uploader(f"Faça o upload do arquivo {tipo_arquivo.lower()}", type=[tipo_arquivo.lower()])
-    
-    with tabs[1]:
-        provedor = st.selectbox("Selecione o provedor do modelo", list(CONFIG_MODELOS.keys()))
-        modelo = st.selectbox("Selecione o modelo", CONFIG_MODELOS[provedor]["modelos"])
-        api_key = st.text_input(f"Adicione a API key para {provedor}", type="password")
-    
-    if st.button("Inicializar Analyse Doc", use_container_width=True):
-        carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
-    
-    if st.button("Apagar Histórico de Conversa", use_container_width=True):
-        st.session_state["memoria"] = MEMORIA
-
-def main():
-    with st.sidebar:
-        sidebar()
-    pagina_chat()
-
-if __name__ == "__main__":
-    main()
