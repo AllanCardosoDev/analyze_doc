@@ -59,6 +59,20 @@ st.markdown("""
         border-radius: 5px;
         padding: 1rem;
         margin-bottom: 1rem;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    }
+    
+    .pdf-section {
+        background-color: #f8f9fa;
+        border-radius: 5px;
+        padding: 15px;
+        border-left: 3px solid #1E88E5;
+        margin-top: 10px;
+    }
+    
+    .pdf-section h4 {
+        color: #1E88E5;
+        margin-bottom: 10px;
     }
     
     .chat-message-ai {
@@ -84,9 +98,57 @@ st.markdown("""
         margin-bottom: 1rem;
     }
     
+    /* Destacar a opção de resumo PDF */
+    .pdf-option {
+        background-color: #e8f5e9;
+        border-radius: 5px;
+        padding: 10px;
+        margin: 10px 0;
+        border-left: 3px solid #43a047;
+    }
+    
+    /* Ícones com animação */
+    .animated-icon {
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0% { opacity: 0.7; }
+        50% { opacity: 1; }
+        100% { opacity: 0.7; }
+    }
+    
     /* Barra de carregamento personalizada */
     .stProgress > div > div > div > div {
         background-color: #1E88E5;
+    }
+    
+    /* Tooltip personalizado */
+    .tooltip {
+        position: relative;
+        display: inline-block;
+    }
+    
+    .tooltip .tooltiptext {
+        visibility: hidden;
+        width: 120px;
+        background-color: #555;
+        color: #fff;
+        text-align: center;
+        border-radius: 6px;
+        padding: 5px;
+        position: absolute;
+        z-index: 1;
+        bottom: 125%;
+        left: 50%;
+        margin-left: -60px;
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    
+    .tooltip:hover .tooltiptext {
+        visibility: visible;
+        opacity: 1;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -276,61 +338,96 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
 def create_download_link(pdf_bytes, filename):
     """Cria um link para download do PDF"""
     b64 = base64.b64encode(pdf_bytes).decode()
-    href = f'<a href="data:application/pdf;base64,{b64}" download="{filename}" class="download-button">📥 Baixar PDF</a>'
+    # Estilo do botão de download para ficar mais atrativo
+    href = f'''
+    <a href="data:application/pdf;base64,{b64}" 
+       download="{filename}" 
+       style="
+           display: inline-block;
+           background-color: #1E88E5;
+           color: white;
+           padding: 10px 20px;
+           text-align: center;
+           text-decoration: none;
+           font-weight: bold;
+           border-radius: 5px;
+           margin: 10px 0;
+           width: 100%;
+           transition: all 0.3s;
+           box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+       "
+       onmouseover="this.style.backgroundColor='#1565C0'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.3)';"
+       onmouseout="this.style.backgroundColor='#1E88E5'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.2)';"
+    >
+        📥 Baixar Resumo em PDF
+    </a>
+    '''
     return href
 
 def pagina_chat():
     """Cria a interface do chat e gerencia a conversa do usuário."""
     st.markdown('<h1 class="main-header">📑 Analyse Doc</h1>', unsafe_allow_html=True)
     
-    # Exibir informações do documento se disponível
+                # Exibir informações do documento se disponível
     if "documento_meta" in st.session_state:
         meta = st.session_state["documento_meta"]
         with st.container():
             st.markdown('<div class="document-info">', unsafe_allow_html=True)
-            col1, col2, col3 = st.columns(3)
+            col1, col2 = st.columns(2)
             
             with col1:
                 st.markdown(f"**Tipo:** {meta['tipo']}")
                 st.markdown(f"**Tamanho:** {meta['tamanho']} caracteres")
-            
-            with col2:
                 st.markdown(f"**Modelo:** {meta['modelo']}")
                 st.markdown(f"**Provedor:** {meta['provedor']}")
-            
-            with col3:
                 st.markdown(f"**Processado em:** {meta['data_processamento']}")
+            
+            with col2:
+                st.markdown('<div class="pdf-section">', unsafe_allow_html=True)
+                st.markdown('<h4>📄 Resumo do Documento</h4>', unsafe_allow_html=True)
                 
-                # Botão para gerar resumo em PDF
-                if st.button("Gerar Resumo em PDF", key="btn_gerar_pdf", use_container_width=True):
-                    with st.spinner("Gerando resumo em PDF..."):
-                        try:
-                            # Obter o texto completo do documento
-                            documento = st.session_state.get("documento_completo", "")
-                            
-                            # Definir o comprimento máximo do resumo
-                            max_length = st.session_state.get("max_resumo_length", 1000)
-                            
-                            # Gerar o resumo
-                            resumo = gera_resumo(documento, max_length)
-                            
-                            # Gerar o PDF
-                            pdf_bytes = gera_pdf_resumo(
-                                resumo, 
-                                meta['tipo'], 
-                                meta['data_processamento']
-                            )
-                            
-                            # Criar link de download
-                            filename = f"resumo_{meta['tipo']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-                            download_link = create_download_link(pdf_bytes, filename)
-                            st.markdown(download_link, unsafe_allow_html=True)
-                            
-                            # Guardar o resumo na sessão para uso posterior
-                            st.session_state["resumo_documento"] = resumo
-                            
-                        except Exception as e:
-                            st.error(f"Erro ao gerar o PDF: {e}")
+                # Verificar se já temos um PDF gerado do resumo durante a inicialização
+                if "resumo_pdf_bytes" in st.session_state and "resumo_filename" in st.session_state:
+                    st.success("O resumo em PDF já foi gerado!")
+                    download_link = create_download_link(
+                        st.session_state["resumo_pdf_bytes"], 
+                        st.session_state["resumo_filename"]
+                    )
+                    st.markdown(download_link, unsafe_allow_html=True)
+                else:
+                    # Botão para gerar resumo em PDF
+                    if st.button("📥 Baixar Resumo em PDF", key="btn_gerar_pdf", use_container_width=True):
+                        with st.spinner("Gerando resumo em PDF..."):
+                            try:
+                                # Obter o texto completo do documento
+                                documento = st.session_state.get("documento_completo", "")
+                                
+                                # Definir o comprimento máximo do resumo
+                                max_length = st.session_state.get("max_resumo_length", 1000)
+                                
+                                # Gerar o resumo
+                                resumo = gera_resumo(documento, max_length)
+                                
+                                # Gerar o PDF
+                                pdf_bytes = gera_pdf_resumo(
+                                    resumo, 
+                                    meta['tipo'], 
+                                    meta['data_processamento']
+                                )
+                                
+                                # Criar link de download
+                                filename = f"resumo_{meta['tipo']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                                download_link = create_download_link(pdf_bytes, filename)
+                                st.markdown(download_link, unsafe_allow_html=True)
+                                
+                                # Guardar o resumo na sessão para uso posterior
+                                st.session_state["resumo_documento"] = resumo
+                                
+                            except Exception as e:
+                                st.error(f"Erro ao gerar o PDF: {e}")
+                
+                st.caption("O resumo em PDF contém os principais pontos do documento analisado, formatados para leitura e compartilhamento.")
+                st.markdown('</div>', unsafe_allow_html=True)
             
             st.markdown('</div>', unsafe_allow_html=True)
     
@@ -477,18 +574,24 @@ def sidebar():
         st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
         st.markdown("### ⚙️ Processamento avançado")
         
+        # Modificar o texto do checkbox para deixar claro que o resumo será em PDF
         st.checkbox(
-            "Gerar resumo automático", 
+            "Gerar resumo automático em PDF", 
             key="gerar_resumo", 
-            help="Cria um resumo do documento antes de processar"
+            help="Cria um resumo do documento em PDF para download"
         )
         
-        st.slider(
-            "Comprimento máximo do resumo", 
-            500, 5000, 1000, 
-            key="max_resumo_length",
-            help="Número máximo de caracteres no resumo"
-        )
+        # Adicionar um ícone visual de PDF ao lado do slider
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            st.slider(
+                "Comprimento máximo do resumo", 
+                500, 5000, 1000, 
+                key="max_resumo_length",
+                help="Número máximo de caracteres no resumo do PDF"
+            )
+        with col2:
+            st.markdown("📄 PDF", help="O resumo será gerado em formato PDF")
         
         idiomas = {"Português": "pt", "Inglês": "en", "Espanhol": "es", "Francês": "fr"}
         idioma_selecionado = st.selectbox(
@@ -586,14 +689,29 @@ def sidebar():
                 if st.session_state.get("gerar_resumo", False) and arquivo:
                     documento = carrega_arquivos(tipo_arquivo, arquivo)
                     if not (isinstance(documento, str) and (documento.startswith("❌") or documento.startswith("⚠️"))):
-                        st.info("Gerando resumo do documento...")
-                        # Corrigido: obter max_length corretamente da session_state
-                        max_length = st.session_state.get("max_resumo_length", 1000)
-                        try:
-                            documento = gera_resumo(documento, max_length)
-                            st.session_state["documento_processado"] = documento
-                        except Exception as e:
-                            st.error(f"Erro ao gerar resumo: {e}")
+                        with st.spinner("Gerando resumo em PDF do documento..."):
+                            # Corrigido: obter max_length corretamente da session_state
+                            max_length = st.session_state.get("max_resumo_length", 1000)
+                            try:
+                                # Gerar resumo
+                                resumo = gera_resumo(documento, max_length)
+                                st.session_state["documento_processado"] = resumo
+                                
+                                # Gerar PDF automaticamente
+                                data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                                pdf_bytes = gera_pdf_resumo(
+                                    resumo, 
+                                    tipo_arquivo, 
+                                    data_atual
+                                )
+                                
+                                # Salvar para disponibilizar o download depois de carregar o modelo
+                                st.session_state["resumo_pdf_bytes"] = pdf_bytes
+                                st.session_state["resumo_filename"] = f"resumo_{tipo_arquivo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                                
+                                st.success("✅ Resumo em PDF gerado com sucesso! O link para download estará disponível após a inicialização.")
+                            except Exception as e:
+                                st.error(f"Erro ao gerar resumo em PDF: {e}")
                 
                 # Inicia o modelo normalmente
                 carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
