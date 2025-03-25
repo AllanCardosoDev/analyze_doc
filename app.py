@@ -33,98 +33,135 @@ CONFIG_MODELOS = {
 }
 
 MEMORIA = ConversationBufferMemory()
+
 def carrega_arquivos(tipo_arquivo, arquivo):
-    if tipo_arquivo == 'Site':
-        documento = carrega_site(arquivo)
-    if tipo_arquivo == 'Youtube':
-        documento = carrega_youtube(arquivo)
-    if tipo_arquivo == 'Pdf':
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp:
-            temp.write(arquivo.read())
-            nome_temp = temp.name
-        documento = carrega_pdf(nome_temp)
-    if tipo_arquivo == 'Csv':
-        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as temp:
-            temp.write(arquivo.read())
-            nome_temp = temp.name
-        documento = carrega_csv(nome_temp)
-    if tipo_arquivo == 'Txt':
-        with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as temp:
-            temp.write(arquivo.read())
-            nome_temp = temp.name
-        documento = carrega_txt(nome_temp)
-    return documento
+    """Função para carregar arquivos com tratamento de erros."""
+    try:
+        if tipo_arquivo == "Site":
+            return carrega_site(arquivo)
+        elif tipo_arquivo == "Youtube":
+            return carrega_youtube(arquivo)
+        elif tipo_arquivo == "Pdf":
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp:
+                temp.write(arquivo.read())
+                return carrega_pdf(temp.name)
+        elif tipo_arquivo == "Csv":
+            with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as temp:
+                temp.write(arquivo.read())
+                return carrega_csv(temp.name)
+        elif tipo_arquivo == "Txt":
+            with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as temp:
+                temp.write(arquivo.read())
+                return carrega_txt(temp.name)
+    except Exception as e:
+        return f"❌ Erro ao carregar arquivo: {e}"
+
+def sanitize_text(text):
+    """Sanitiza o texto para evitar problemas de codificação."""
+    import unicodedata
+    import re
+    
+    # Normaliza e remove acentos
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+    
+    # Remove caracteres que não são ASCII imprimíveis
+    text = re.sub(r'[^\x20-\x7E]', '', text)
+    
+    return text
+
 def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
+    """Carrega o modelo de IA e prepara o sistema para responder com base no documento."""
+    if not api_key:
+        st.error("⚠️ API Key não fornecida. Adicione uma chave válida para continuar.")
+        return
+    
     documento = carrega_arquivos(tipo_arquivo, arquivo)
-    system_message = '''Você é um assistente amigável chamado Oráculo.
-    Você possui acesso às seguintes informações vindas
-    de um documento {}:
-    ####
-    {}
-    ####
-    Utilize as informações fornecidas para basear as suas respostas.
-    Sempre que houver $ na sua saída, substita por S.
-    Se a informação do documento for algo como "Just a moment...Enable JavaScript and cookies to continue"
-    sugira ao usuário carregar novamente o Oráculo!'''.format(tipo_arquivo, documento)
-    print(system_message)
+    if isinstance(documento, str) and (documento.startswith("❌") or documento.startswith("⚠️")):
+        st.error(documento)
+        return
+    
+    # Limita e sanitiza o documento para evitar problemas de codificação
+    documento_limitado = documento[:10000]  # Limita para 10k caracteres para evitar exceder limites de tokens
+    documento_sanitizado = sanitize_text(documento_limitado)
+    
+    system_message = f"""
+    Você é um assistente chamado Analyse Doc.
+    Aqui está o conteúdo do documento ({tipo_arquivo}) carregado:
+    ###
+    {documento_sanitizado}
+    ###
+    Responda com base nesse conteúdo.
+    Se não conseguir acessar, informe ao usuário.
+    """
+    
     template = ChatPromptTemplate.from_messages([
-        ('system', system_message),
-        ('placeholder', '{chat_history}'),
-        ('user', '{input}')
+        ("system", system_message),
+        ("placeholder", "{chat_history}"),
+        ("user", "{input}")
     ])
-    chat = CONFIG_MODELOS[provedor]['chat'](model=modelo, api_key=api_key)
+    
+    chat = CONFIG_MODELOS[provedor]["chat"](model=modelo, api_key=api_key)
     chain = template | chat
-    st.session_state['chain'] = chain
+    st.session_state["chain"] = chain
+
 def pagina_chat():
-    st.header('🤖Bem-vindo ao Oráculo', divider=True)
-    chain = st.session_state.get('chain')
+    """Cria a interface do chat e gerencia a conversa do usuário."""
+    st.header("🤖 Bem-vindo ao Analyse Doc", divider=True)
+    
+    chain = st.session_state.get("chain")
     if chain is None:
-        st.error('Carrege o Oráculo')
+        st.error("Carregue o Analyse Doc primeiro.")
         st.stop()
-    memoria = st.session_state.get('memoria', MEMORIA)
+    
+    memoria = st.session_state.get("memoria", MEMORIA)
     for mensagem in memoria.buffer_as_messages:
-        chat = st.chat_message(mensagem.type)
-        chat.markdown(mensagem.content)
-    input_usuario = st.chat_input('Fale com o oráculo')
+        st.chat_message(mensagem.type).markdown(mensagem.content)
+    
+    input_usuario = st.chat_input("Fale com o Analyse Doc")
     if input_usuario:
-        chat = st.chat_message('human')
-        chat.markdown(input_usuario)
-        chat = st.chat_message('ai')
-        resposta = chat.write_stream(chain.stream({
-            'input': input_usuario,
-            'chat_history': memoria.buffer_as_messages
+        st.chat_message("human").markdown(input_usuario)
+        
+        try:
+            # Sanitiza a entrada do usuário também
+            input_sanitizado = sanitize_text(input_usuario)
+            
+            resposta = st.chat_message("ai").write_stream(chain.stream({
+                "input": input_sanitizado,
+                "chat_history": memoria.buffer_as_messages
             }))
-        memoria.chat_memory.add_user_message(input_usuario)
-        memoria.chat_memory.add_ai_message(resposta)
-        st.session_state['memoria'] = memoria
+            
+            memoria.chat_memory.add_user_message(input_usuario)
+            memoria.chat_memory.add_ai_message(resposta)
+            st.session_state["memoria"] = memoria
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao processar sua solicitação: {str(e)}")
+
 def sidebar():
-    tabs = st.tabs(['Upload de Arquivos', 'Seleção de Modelos'])
+    """Cria a barra lateral para upload de arquivos e seleção de modelos."""
+    tabs = st.tabs(["Upload de Arquivos", "Seleção de Modelos"])
+    
     with tabs[0]:
-        tipo_arquivo = st.selectbox('Selecione o tipo de arquivo', TIPOS_ARQUIVOS_VALIDOS)
-        if tipo_arquivo == 'Site':
-            arquivo = st.text_input('Digite a url do site')
-        if tipo_arquivo == 'Youtube':
-            arquivo = st.text_input('Digite a url do vídeo')
-        if tipo_arquivo == 'Pdf':
-            arquivo = st.file_uploader('Faça o upload do arquivo pdf', type=['.pdf'])
-        if tipo_arquivo == 'Csv':
-            arquivo = st.file_uploader('Faça o upload do arquivo csv', type=['.csv'])
-        if tipo_arquivo == 'Txt':
-            arquivo = st.file_uploader('Faça o upload do arquivo txt', type=['.txt'])
+        tipo_arquivo = st.selectbox("Selecione o tipo de arquivo", TIPOS_ARQUIVOS_VALIDOS)
+        if tipo_arquivo in ["Site", "Youtube"]:
+            arquivo = st.text_input(f"Digite a URL do {tipo_arquivo.lower()}")
+        else:
+            arquivo = st.file_uploader(f"Faça o upload do arquivo {tipo_arquivo.lower()}", type=[tipo_arquivo.lower()])
+    
     with tabs[1]:
-        provedor = st.selectbox('Selecione o provedor dos modelo', CONFIG_MODELOS.keys())
-        modelo = st.selectbox('Selecione o modelo', CONFIG_MODELOS[provedor]['modelos'])
-        api_key = st.text_input(
-            f'Adicione a api key para o provedor {provedor}',
-            value=st.session_state.get(f'api_key_{provedor}'))
-        st.session_state[f'api_key_{provedor}'] = api_key
-    if st.button('Inicializar Oráculo', use_container_width=True):
+        provedor = st.selectbox("Selecione o provedor do modelo", list(CONFIG_MODELOS.keys()))
+        modelo = st.selectbox("Selecione o modelo", CONFIG_MODELOS[provedor]["modelos"])
+        api_key = st.text_input(f"Adicione a API key para {provedor}", type="password")
+    
+    if st.button("Inicializar Analyse Doc", use_container_width=True):
         carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
-    if st.button('Apagar Histórico de Conversa', use_container_width=True):
-        st.session_state['memoria'] = MEMORIA
+    
+    if st.button("Apagar Histórico de Conversa", use_container_width=True):
+        st.session_state["memoria"] = MEMORIA
+
 def main():
     with st.sidebar:
         sidebar()
     pagina_chat()
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
