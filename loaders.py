@@ -26,8 +26,14 @@ def carrega_site(url):
         return "⚠️ Não foi possível carregar o site."
     return documento
 
-def carrega_youtube(video_id):
-    """Carrega legendas de vídeos do YouTube."""
+def carrega_youtube(video_id, proxy=None):
+    """
+    Carrega legendas de vídeos do YouTube com suporte a proxy.
+    
+    Args:
+        video_id: ID ou URL do vídeo do YouTube
+        proxy: String de proxy no formato 'http://usuário:senha@host:porta'
+    """
     try:
         # Extrai o video_id de uma URL completa, se for fornecida
         if "youtube.com" in video_id or "youtu.be" in video_id:
@@ -39,8 +45,26 @@ def carrega_youtube(video_id):
         # Importa diretamente o youtube_transcript_api para mais controle
         from youtube_transcript_api import YouTubeTranscriptApi
         
-        # Obtém as legendas diretamente
-        transcripts = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt', 'en'])
+        # Configuração de proxy, se fornecido
+        proxies = None
+        if proxy:
+            proxies = {'http': proxy, 'https': proxy}
+        
+        # Tenta primeiro com o idioma português, depois com inglês
+        languages = ['pt', 'pt-BR', 'en']
+        
+        # Obtém as legendas diretamente, com suporte a proxy
+        if proxies:
+            from youtube_transcript_api.formatters import TextFormatter
+            from youtube_transcript_api import TranscriptListFetcher
+            
+            fetcher = TranscriptListFetcher(proxies=proxies)
+            transcript_list = fetcher.fetch_transcript_list(video_id)
+            transcript = transcript_list.find_transcript(languages)
+            transcripts = transcript.fetch()
+        else:
+            # Método padrão sem proxy
+            transcripts = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
         
         # Formata as legendas em um texto contínuo
         if not transcripts:
@@ -53,6 +77,18 @@ def carrega_youtube(video_id):
         
         return texto_completo
     except Exception as e:
+        mensagem_erro = str(e)
+        if "IP" in mensagem_erro and "block" in mensagem_erro:
+            return """❌ O YouTube está bloqueando as requisições do seu IP. Isso pode acontecer por:
+            
+1. Muitas requisições foram feitas em um curto período
+2. Você está usando um IP de um provedor de nuvem (AWS, Google Cloud, etc.)
+
+Soluções:
+- Configure um proxy na aba 'Configurações'
+- Espere algumas horas e tente novamente
+- Use uma VPN ou outra rede para acessar
+            """
         return f"❌ Erro ao carregar YouTube: {e}"
 
 def carrega_csv(caminho):
