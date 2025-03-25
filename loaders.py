@@ -3,7 +3,6 @@ from time import sleep
 import streamlit as st
 from langchain_community.document_loaders import (
     WebBaseLoader,
-    YoutubeLoader,
     CSVLoader,
     PyPDFLoader,
     TextLoader
@@ -27,13 +26,42 @@ def carrega_site(url):
         return "⚠️ Não foi possível carregar o site."
     return documento
 
-def carrega_youtube(video_id):
-    """Carrega legendas de vídeos do YouTube."""
+def carrega_youtube(video_url):
+    """Carrega legendas de vídeos do YouTube com método alternativo."""
     try:
-        loader = YoutubeLoader(video_id, add_video_info=False, language=['pt'])
-        lista_documentos = loader.load()
-        documento = '\n\n'.join([doc.page_content for doc in lista_documentos])
-        return documento
+        # Importar diretamente a biblioteca para acessar a API
+        from youtube_transcript_api import YouTubeTranscriptApi
+        
+        # Extrair o ID do vídeo da URL se necessário
+        if "youtube.com" in video_url or "youtu.be" in video_url:
+            if "v=" in video_url:
+                video_id = video_url.split("v=")[1].split("&")[0]
+            elif "youtu.be/" in video_url:
+                video_id = video_url.split("youtu.be/")[1].split("?")[0]
+            else:
+                video_id = video_url
+        else:
+            # Assumir que o input já é o ID
+            video_id = video_url
+            
+        # Obter transcrições diretamente
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        
+        # Tentar primeiro legendas em português
+        try:
+            transcript = transcript_list.find_transcript(['pt'])
+        except:
+            # Se não encontrar em português, pegar a que estiver disponível
+            try:
+                transcript = transcript_list.find_generated_transcript(['pt', 'en'])
+            except:
+                transcript = transcript_list[0]
+            
+        # Obter o texto completo
+        transcript_data = transcript.fetch()
+        texto_completo = " ".join([item['text'] for item in transcript_data])
+        
+        return texto_completo
     except Exception as e:
         return f"❌ Erro ao carregar YouTube: {e}"
 
