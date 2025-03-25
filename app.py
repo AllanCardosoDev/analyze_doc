@@ -7,7 +7,7 @@ from langchain.prompts import ChatPromptTemplate
 from loaders import *
 
 TIPOS_ARQUIVOS_VALIDOS = [
-    "Site", "Youtube", "Pdf", "Csv", "Txt"
+    "Site", "Youtube", "Pdf", "Docx", "Csv", "Txt"
 ]
 
 CONFIG_MODELOS = {
@@ -47,6 +47,10 @@ def carrega_arquivos(tipo_arquivo, arquivo):
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp:
                 temp.write(arquivo.read())
                 return carrega_pdf(temp.name)
+        elif tipo_arquivo == "Docx":  # Novo tipo de arquivo
+            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as temp:
+                temp.write(arquivo.read())
+                return carrega_docx(temp.name)
         elif tipo_arquivo == "Csv":
             with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as temp:
                 temp.write(arquivo.read())
@@ -64,7 +68,12 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         st.error("⚠️ API Key não fornecida. Adicione uma chave válida para continuar.")
         return
     
-    documento = carrega_arquivos(tipo_arquivo, arquivo)
+    # Usa o documento processado se disponível, senão carrega normalmente
+    if "documento_processado" in st.session_state:
+        documento = st.session_state.pop("documento_processado")
+    else:
+        documento = carrega_arquivos(tipo_arquivo, arquivo)
+    
     if documento.startswith("❌") or documento.startswith("⚠️"):
         st.error(documento)
         return
@@ -115,14 +124,17 @@ def pagina_chat():
 
 def sidebar():
     """Cria a barra lateral para upload de arquivos e seleção de modelos."""
-    tabs = st.tabs(["Upload de Arquivos", "Seleção de Modelos", "Configurações"])
+    tabs = st.tabs(["Upload de Arquivos", "Seleção de Modelos", "Processamento", "Configurações"])
     
     with tabs[0]:
         tipo_arquivo = st.selectbox("Selecione o tipo de arquivo", TIPOS_ARQUIVOS_VALIDOS)
         if tipo_arquivo in ["Site", "Youtube"]:
             arquivo = st.text_input(f"Digite a URL do {tipo_arquivo.lower()}")
         else:
-            arquivo = st.file_uploader(f"Faça o upload do arquivo {tipo_arquivo.lower()}", type=[tipo_arquivo.lower()])
+            if tipo_arquivo == "Docx":
+                arquivo = st.file_uploader(f"Faça o upload do arquivo {tipo_arquivo.lower()}", type=["docx"])
+            else:
+                arquivo = st.file_uploader(f"Faça o upload do arquivo {tipo_arquivo.lower()}", type=[tipo_arquivo.lower()])
     
     with tabs[1]:
         provedor = st.selectbox("Selecione o provedor do modelo", list(CONFIG_MODELOS.keys()))
@@ -130,6 +142,26 @@ def sidebar():
         api_key = st.text_input(f"Adicione a API key para {provedor}", type="password")
     
     with tabs[2]:
+        st.subheader("Processamento avançado")
+        
+        st.checkbox("Gerar resumo automático", key="gerar_resumo", 
+                  help="Cria um resumo do documento antes de processar")
+        
+        st.slider("Comprimento máximo do resumo", 500, 5000, 1000, key="max_resumo_length",
+                help="Número máximo de caracteres no resumo")
+        
+        idiomas = {"Português": "pt", "Inglês": "en", "Espanhol": "es", "Francês": "fr"}
+        idioma_selecionado = st.selectbox("Idioma de saída", list(idiomas.keys()), key="idioma_saida",
+                               help="Traduzir o conteúdo para este idioma")
+        st.session_state["idioma_codigo"] = idiomas[idioma_selecionado]
+        
+        st.checkbox("Extrair entidades", key="extrair_entidades", disabled=True,
+                  help="Identifica nomes, organizações e outras entidades (em breve)")
+        
+        st.checkbox("Análise de sentimento", key="analise_sentimento", disabled=True,
+                  help="Analisa o tom emocional do documento (em breve)")
+    
+    with tabs[3]:
         st.subheader("Configurações do YouTube")
         proxy = st.text_input(
             "Proxy para YouTube (formato: http://usuario:senha@host:porta)",
@@ -145,8 +177,36 @@ def sidebar():
         2. Usar uma VPN
         3. Esperar algumas horas e tentar novamente
         """)
+        
+        st.subheader("Preferências de interface")
+        theme = st.selectbox("Tema", ["Claro", "Escuro"], key="theme")
+        if theme == "Escuro":
+            st.markdown(
+                """
+                <style>
+                    .stApp {
+                        background-color: #1E1E1E;
+                        color: #FFFFFF;
+                    }
+                    .stTextInput, .stTextArea {
+                        background-color: #2D2D2D;
+                        color: #FFFFFF;
+                    }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
     
     if st.button("Inicializar Analyse Doc", use_container_width=True):
+        # Verificar se devemos processar o documento
+        if st.session_state.get("gerar_resumo", False):
+            documento = carrega_arquivos(tipo_arquivo, arquivo)
+            if not documento.startswith("❌") and not documento.startswith("⚠️"):
+                max_length = st.session_state.get("max_resumo_length", 1000)
+                documento = gera_resumo(documento, max_length)
+                st.session_state["documento_processado"] = documento
+        
+        # Inicia o modelo normalmente
         carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
     
     if st.button("Apagar Histórico de Conversa", use_container_width=True):
