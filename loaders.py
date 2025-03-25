@@ -1,10 +1,5 @@
-"""
-Módulo de carregadores para diferentes tipos de documentos.
-Fornece funções para extrair texto de arquivos e conteúdo web.
-"""
-
 import os
-import re
+from time import sleep
 import streamlit as st
 from langchain_community.document_loaders import (
     WebBaseLoader,
@@ -12,76 +7,38 @@ from langchain_community.document_loaders import (
     PyPDFLoader,
     TextLoader
 )
+from fake_useragent import UserAgent
+from docx import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_transformers import DoctranTextTranslator
 from langchain_core.documents import Document as LangchainDocument
 
-# Configurações e variáveis globais
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0'
-]
-
-def get_random_user_agent():
-    """Retorna um User-Agent aleatório da lista."""
-    import random
-    return random.choice(USER_AGENTS)
-
 def carrega_site(url):
-    """
-    Carrega texto de um site usando WebBaseLoader.
-    
-    Args:
-        url: URL do site a ser carregado
-        
-    Returns:
-        String com o conteúdo do site ou mensagem de erro
-    """
+    """Carrega texto de um site usando WebBaseLoader."""
     documento = ""
-    
-    try:
-        # Configura o User-Agent
-        os.environ["USER_AGENT"] = get_random_user_agent()
-        
-        # Verifica se a URL é válida
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
-        
-        # Carrega o site com tratamento de erros
-        loader = WebBaseLoader(url)
-        lista_documentos = loader.load()
-        
-        # Concatena o conteúdo de todas as páginas
-        documento = "\n\n".join([doc.page_content for doc in lista_documentos])
-        
-        # Verifica se conseguiu extrair conteúdo
-        if not documento.strip():
-            return "⚠️ Não foi possível extrair conteúdo do site. A página pode estar bloqueando acesso automatizado."
-            
-        return documento
-    
-    except Exception as e:
-        return f"❌ Erro ao carregar o site: {str(e)}"
+    for i in range(5):
+        try:
+            os.environ["USER_AGENT"] = UserAgent().random
+            loader = WebBaseLoader(url, raise_for_status=True)
+            lista_documentos = loader.load()
+            documento = "\n\n".join([doc.page_content for doc in lista_documentos])
+            break
+        except Exception as e:
+            print(f"Erro ao carregar o site {i+1}: {e}")
+            sleep(3)
+    if not documento:
+        return "⚠️ Não foi possível carregar o site."
+    return documento
 
 def carrega_youtube(video_id, proxy=None):
     """
-    Carrega legendas de vídeos do YouTube.
+    Carrega legendas de vídeos do YouTube com suporte a proxy.
     
     Args:
         video_id: ID ou URL do vídeo do YouTube
-        proxy: String de proxy no formato 'http://host:porta'
-        
-    Returns:
-        String com as legendas do vídeo ou mensagem de erro
+        proxy: String de proxy no formato 'http://usuário:senha@host:porta'
     """
     try:
-        # Importa a biblioteca de forma dinâmica para evitar erros no deploy
-        try:
-            from youtube_transcript_api import YouTubeTranscriptApi
-        except ImportError:
-            return "❌ Biblioteca youtube_transcript_api não está instalada."
-        
         # Extrai o video_id de uma URL completa, se for fornecida
         if "youtube.com" in video_id or "youtu.be" in video_id:
             if "youtube.com/watch?v=" in video_id:
@@ -89,168 +46,89 @@ def carrega_youtube(video_id, proxy=None):
             elif "youtu.be/" in video_id:
                 video_id = video_id.split("youtu.be/")[1].split("?")[0]
         
-        # Tenta obter as legendas em diferentes idiomas
-        languages = ['pt', 'pt-BR', 'en']
+        # Importa diretamente o youtube_transcript_api para mais controle
+        from youtube_transcript_api import YouTubeTranscriptApi
         
-        # Configuração de proxy
+        # Configuração de proxy, se fornecido
         proxies = None
         if proxy:
             proxies = {'http': proxy, 'https': proxy}
         
-        # Tenta obter transcrição
-        try:
-            if proxies:
-                from youtube_transcript_api import TranscriptListFetcher
-                fetcher = TranscriptListFetcher(proxies=proxies)
-                transcript_list = fetcher.fetch_transcript_list(video_id)
-                transcript = transcript_list.find_transcript(languages)
-                transcripts = transcript.fetch()
-            else:
-                transcripts = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
-        except Exception as e:
-            return f"""❌ Erro ao buscar legendas: {str(e)}
-            
-Possíveis soluções:
-1. Verifique se o vídeo possui legendas nos idiomas disponíveis (português ou inglês)
-2. Configure um proxy nas configurações adicionais
-3. O YouTube pode estar bloqueando requisições da aplicação
-            """
+        # Tenta primeiro com o idioma português, depois com inglês
+        languages = ['pt', 'pt-BR', 'en']
         
-        # Verifica se encontrou legendas
+        # Obtém as legendas diretamente, com suporte a proxy
+        if proxies:
+            from youtube_transcript_api.formatters import TextFormatter
+            from youtube_transcript_api import TranscriptListFetcher
+            
+            fetcher = TranscriptListFetcher(proxies=proxies)
+            transcript_list = fetcher.fetch_transcript_list(video_id)
+            transcript = transcript_list.find_transcript(languages)
+            transcripts = transcript.fetch()
+        else:
+            # Método padrão sem proxy
+            transcripts = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+        
+        # Formata as legendas em um texto contínuo
         if not transcripts:
-            return "⚠️ Não foram encontradas legendas para este vídeo."
+            return "⚠️ Não foi possível encontrar legendas para este vídeo."
         
-        # Formata as legendas em texto
-        texto_formatado = ""
+        # Combina os segmentos de legendas em um texto formatado
+        texto_completo = ""
         for entry in transcripts:
-            # Adiciona timestamp se disponível
-            if 'start' in entry:
-                seconds = int(entry['start'])
-                minutes = seconds // 60
-                seconds %= 60
-                texto_formatado += f"[{minutes:02d}:{seconds:02d}] "
+            texto_completo += f"{entry.get('text', '')} "
+        
+        return texto_completo
+    except Exception as e:
+        mensagem_erro = str(e)
+        if "IP" in mensagem_erro and "block" in mensagem_erro:
+            return """❌ O YouTube está bloqueando as requisições do seu IP. Isso pode acontecer por:
             
-            # Adiciona o texto da legenda
-            texto_formatado += f"{entry.get('text', '')} "
-        
-        return texto_formatado
-    
-    except Exception as e:
-        return f"❌ Erro ao processar vídeo do YouTube: {str(e)}"
+1. Muitas requisições foram feitas em um curto período
+2. Você está usando um IP de um provedor de nuvem (AWS, Google Cloud, etc.)
 
-def carrega_pdf(caminho):
-    """
-    Carrega e extrai texto de um PDF.
-    
-    Args:
-        caminho: Caminho para o arquivo PDF
-        
-    Returns:
-        String com o conteúdo do PDF
-    """
-    try:
-        # Carrega o PDF usando PyPDFLoader do Langchain
-        loader = PyPDFLoader(caminho)
-        documentos = loader.load()
-        
-        # Concatena o conteúdo de todas as páginas
-        texto = "\n\n".join([f"[Página {i+1}]\n{doc.page_content}" 
-                            for i, doc in enumerate(documentos)])
-        
-        # Verifica se conseguiu extrair texto
-        if not texto.strip():
-            return "⚠️ O PDF não contém texto extraível. Pode ser um PDF escaneado que requer OCR."
-        
-        return texto
-    
-    except Exception as e:
-        return f"❌ Erro ao processar PDF: {str(e)}"
-
-def carrega_txt(caminho):
-    """
-    Carrega e extrai texto de um arquivo TXT.
-    
-    Args:
-        caminho: Caminho para o arquivo TXT
-        
-    Returns:
-        String com o conteúdo do arquivo TXT
-    """
-    try:
-        # Tenta diferentes codificações em caso de erro
-        encodings = ['utf-8', 'latin-1', 'cp1252']
-        
-        for encoding in encodings:
-            try:
-                with open(caminho, 'r', encoding=encoding) as file:
-                    return file.read()
-            except UnicodeDecodeError:
-                continue
-        
-        # Se nenhuma codificação funcionou, tenta o loader do Langchain
-        loader = TextLoader(caminho)
-        documentos = loader.load()
-        return "\n\n".join([doc.page_content for doc in documentos])
-    
-    except Exception as e:
-        return f"❌ Erro ao carregar arquivo TXT: {str(e)}"
+Soluções:
+- Configure um proxy na aba 'Configurações'
+- Espere algumas horas e tente novamente
+- Use uma VPN ou outra rede para acessar
+            """
+        return f"❌ Erro ao carregar YouTube: {e}"
 
 def carrega_csv(caminho):
-    """
-    Carrega dados de arquivos CSV.
-    
-    Args:
-        caminho: Caminho para o arquivo CSV
-        
-    Returns:
-        String com o conteúdo do CSV formatado
-    """
+    """Carrega dados de arquivos CSV."""
+    loader = CSVLoader(caminho)
+    lista_documentos = loader.load()
+    return "\n\n".join([doc.page_content for doc in lista_documentos])
+
+def carrega_pdf(caminho):
+    """Carrega e extrai texto de um PDF."""
     try:
-        # Tenta usar o loader do Langchain
-        loader = CSVLoader(caminho)
+        loader = PyPDFLoader(caminho)
         documentos = loader.load()
-        
-        # Formata o conteúdo para melhor legibilidade
-        conteudo = "\n\n".join([doc.page_content for doc in documentos])
-        
-        return conteudo
-    
+        texto = "\n\n".join([doc.page_content for doc in documentos])
+        return texto if texto.strip() else "⚠️ O PDF não contém texto extraível."
     except Exception as e:
-        # Fallback: tenta carregar manualmente com pandas
-        try:
-            import pandas as pd
-            df = pd.read_csv(caminho)
-            return df.to_string()
-        except:
-            return f"❌ Erro ao carregar arquivo CSV: {str(e)}"
+        return f"❌ Erro ao carregar PDF: {e}"
+
+def carrega_txt(caminho):
+    """Carrega e extrai texto de um arquivo TXT."""
+    loader = TextLoader(caminho)
+    lista_documentos = loader.load()
+    return "\n\n".join([doc.page_content for doc in lista_documentos])
 
 def carrega_docx(caminho):
-    """
-    Carrega e extrai texto de um arquivo DOCX.
-    
-    Args:
-        caminho: Caminho para o arquivo DOCX
-        
-    Returns:
-        String com o conteúdo do documento DOCX
-    """
+    """Carrega e extrai texto de um arquivo DOCX."""
     try:
-        # Importa python-docx se disponível
-        try:
-            from docx import Document
-        except ImportError:
-            return "❌ Biblioteca python-docx não está instalada."
-        
-        # Carrega o documento
         doc = Document(caminho)
         texto_completo = []
         
-        # Extrai texto de parágrafos
+        # Extrair texto de parágrafos
         for para in doc.paragraphs:
             if para.text.strip():
                 texto_completo.append(para.text)
         
-        # Extrai texto de tabelas
+        # Extrair texto de tabelas
         for table in doc.tables:
             for row in table.rows:
                 row_text = []
@@ -260,34 +138,17 @@ def carrega_docx(caminho):
                 if row_text:
                     texto_completo.append(" | ".join(row_text))
         
-        # Junta todo o texto
         resultado = "\n\n".join(texto_completo)
-        
-        # Verifica se conseguiu extrair texto
-        if not resultado.strip():
-            return "⚠️ O documento DOCX não contém texto extraível."
-        
-        return resultado
-    
+        return resultado if resultado.strip() else "⚠️ O documento DOCX não contém texto extraível."
     except Exception as e:
-        return f"❌ Erro ao carregar DOCX: {str(e)}"
+        return f"❌ Erro ao carregar DOCX: {e}"
 
 def gera_resumo(texto, max_length=1000):
     """
     Gera um resumo automático do texto usando chunking e extração de frases importantes.
-    
-    Args:
-        texto: Texto a ser resumido
-        max_length: Tamanho máximo do resumo em caracteres
-        
-    Returns:
-        String com o resumo gerado
+    Esta é uma implementação básica. Para resultados melhores, use os modelos de LLM.
     """
     try:
-        # Verificar se o texto já é curto o suficiente
-        if len(texto) <= max_length:
-            return texto
-        
         # Converter para documento Langchain
         doc = LangchainDocument(page_content=texto)
         
@@ -299,35 +160,44 @@ def gera_resumo(texto, max_length=1000):
         )
         chunks = text_splitter.split_documents([doc])
         
-        # Extrair frases importantes
+        # Extrair frases importantes (simplificado)
         frases_importantes = []
-        
         for chunk in chunks:
             # Dividir em frases
             sentences = chunk.page_content.split('. ')
-            
-            # Filtrar frases muito curtas
-            sentences = [s + '.' for s in sentences if len(s.split()) > 5]
-            
-            # Ordenar frases por comprimento (uma heurística simples)
+            # Selecionar as frases mais longas (geralmente mais informativas)
             sorted_sentences = sorted(sentences, key=len, reverse=True)
-            
             # Pegar as 2-3 frases mais longas de cada chunk
             frases_importantes.extend(sorted_sentences[:min(3, len(sorted_sentences))])
         
         # Limitar o tamanho total do resumo
-        resumo = " ".join(frases_importantes)
+        resumo = ". ".join(frases_importantes)
         if len(resumo) > max_length:
-            # Tenta cortar em um ponto final para preservar frases completas
-            ultima_frase = resumo[:max_length].rfind('.')
-            if ultima_frase > 0:
-                resumo = resumo[:ultima_frase + 1]
-            else:
-                resumo = resumo[:max_length] + "..."
+            resumo = resumo[:max_length] + "..."
         
         return resumo
-    
     except Exception as e:
-        st.warning(f"Erro ao gerar resumo: {str(e)}")
-        # Fallback: corte simples do texto original
-        return texto[:max_length] + "..."
+        print(f"Erro ao gerar resumo: {e}")
+        return "Não foi possível gerar um resumo automático."
+
+def traduz_texto(texto, idioma_destino='pt'):
+    """
+    Traduz o texto para o idioma especificado.
+    Requer que um modelo de LLM esteja disponível.
+    """
+    try:
+        # Criar um documento Langchain
+        doc = LangchainDocument(page_content=texto)
+        
+        # Configurar o tradutor
+        translator = DoctranTextTranslator(
+            language=idioma_destino
+        )
+        
+        # Traduzir o documento
+        documentos_traduzidos = translator.transform_documents([doc])
+        
+        return documentos_traduzidos[0].page_content
+    except Exception as e:
+        print(f"Erro ao traduzir texto: {e}")
+        return f"Não foi possível traduzir o texto: {e}"
