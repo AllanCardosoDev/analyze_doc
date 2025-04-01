@@ -942,7 +942,7 @@ with col1:
                     # Iniciar o modelo normalmente
                     carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
     
-    with col2:
+with col2:
         if st.button("Apagar Histórico", use_container_width=True):
             st.session_state["memoria"] = ConversationBufferMemory()
             st.success("✅ Histórico de conversa apagado!")
