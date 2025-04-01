@@ -1,5 +1,6 @@
 import tempfile
 import os
+import logging
 from time import sleep
 import streamlit as st
 from langchain.memory import ConversationBufferMemory
@@ -8,14 +9,20 @@ from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 
-from langchain_community.document_loaders import (
-    WebBaseLoader,
-    YoutubeLoader, 
-    CSVLoader, 
-    PyPDFLoader, 
-    TextLoader
+from loaders import (
+    carrega_site, 
+    carrega_pdf, 
+    carrega_csv, 
+    carrega_txt,
+    gera_resumo
 )
-from fake_useragent import UserAgent
+
+# Configurações de logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Configurações da interface
 st.set_page_config(
@@ -55,7 +62,7 @@ st.markdown("""
 
 # Constantes
 TIPOS_ARQUIVOS_VALIDOS = [
-    'Site', 'Youtube', 'Pdf', 'Csv', 'Txt'
+    'Site', 'Pdf', 'Csv', 'Txt'
 ]
 
 CONFIG_MODELOS = {
@@ -73,199 +80,87 @@ CONFIG_MODELOS = {
 if "memoria" not in st.session_state:
     st.session_state["memoria"] = ConversationBufferMemory()
 
-# Funções para carregar documentos
-def carrega_site(url):
-    """Carrega texto de um site usando WebBaseLoader."""
-    documento = ''
-    for i in range(5):  # Tenta 5 vezes
-        try:
-            # Usar um user-agent aleatório para evitar bloqueios
-            os.environ["USER_AGENT"] = UserAgent().random
-            
-            # Verificar formato da URL
-            if not url.startswith(('http://', 'https://')):
-                url = 'https://' + url
-                
-            loader = WebBaseLoader(url, raise_for_status=True)
-            lista_documentos = loader.load()
-            documento = "\n\n".join([doc.page_content for doc in lista_documentos])
-            if documento:
-                break
-        except Exception as e:
-            print(f"Tentativa {i+1} falhou: {e}")
-            sleep(3)  # Aguarda 3 segundos antes de tentar novamente
-            
-    if not documento:
-        return "⚠️ Não foi possível carregar o site após múltiplas tentativas."
-        
-    return documento
-
-def carrega_youtube(video_id):
-    """Carrega legendas de vídeos do YouTube."""
-    try:
-        # Extrai o video_id de uma URL completa, se for fornecida
-        if "youtube.com" in video_id or "youtu.be" in video_id:
-            if "youtube.com/watch?v=" in video_id:
-                video_id = video_id.split("youtube.com/watch?v=")[1].split("&")[0]
-            elif "youtu.be/" in video_id:
-                video_id = video_id.split("youtu.be/")[1].split("?")[0]
-        
-        # Importa diretamente o youtube_transcript_api para maior compatibilidade
-        from youtube_transcript_api import YouTubeTranscriptApi
-        from youtube_transcript_api.formatters import TextFormatter
-        
-        # Tenta primeiro com o idioma português, depois com inglês
-        languages = ['pt', 'pt-BR', 'en']
-        
-        transcripts = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
-        
-        # Formata as legendas em um texto contínuo
-        formatter = TextFormatter()
-        texto_formatado = formatter.format_transcript(transcripts)
-        
-        if not texto_formatado:
-            # Fallback para método manual se o formatter falhar
-            texto_completo = ""
-            for entry in transcripts:
-                texto_completo += f"{entry.get('text', '')} "
-            return texto_completo
-            
-        return texto_formatado
-        
-    except Exception as e:
-        mensagem_erro = str(e)
-        if "IP" in mensagem_erro and "block" in mensagem_erro:
-            return """❌ O YouTube está bloqueando as requisições do seu IP. Tente mais tarde."""
-        return f"❌ Erro ao carregar YouTube: {e}"
-
-def carrega_csv(caminho):
-    """Carrega dados de arquivos CSV."""
-    try:
-        loader = CSVLoader(caminho)
-        lista_documentos = loader.load()
-        return "\n\n".join([doc.page_content for doc in lista_documentos])
-    except Exception as e:
-        return f"❌ Erro ao carregar CSV: {e}"
-
-def carrega_pdf(caminho):
-    """Carrega e extrai texto de um PDF."""
-    try:
-        loader = PyPDFLoader(caminho)
-        lista_documentos = loader.load()
-        return "\n\n".join([doc.page_content for doc in lista_documentos])
-    except Exception as e:
-        return f"❌ Erro ao carregar PDF: {e}"
-
-def carrega_txt(caminho):
-    """Carrega e extrai texto de um arquivo TXT."""
-    try:
-        loader = TextLoader(caminho)
-        lista_documentos = loader.load()
-        return "\n\n".join([doc.page_content for doc in lista_documentos])
-    except Exception as e:
-        return f"❌ Erro ao carregar TXT: {e}"
-
 def carrega_arquivos(tipo_arquivo, arquivo):
     """Função para carregar arquivos com tratamento de erros."""
     if not arquivo:
+        logger.warning("Nenhum arquivo ou URL fornecido.")
         return "❌ Nenhum arquivo ou URL fornecido."
         
     try:
         if tipo_arquivo == "Site":
             return carrega_site(arquivo)
-        elif tipo_arquivo == "Youtube":
-            return carrega_youtube(arquivo)
-        elif tipo_arquivo == "Pdf":
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp:
-                temp.write(arquivo.read())
-                temp_path = temp.name
-                
-            # Ler o arquivo PDF
-            resultado = carrega_pdf(temp_path)
-            
-            # Limpar o arquivo temporário
+        
+        # Para outros tipos de arquivo, criar arquivo temporário
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{tipo_arquivo.lower()}") as temp:
+            temp.write(arquivo.read())
+            temp_path = temp.name
+        
+        try:
+            if tipo_arquivo == "Pdf":
+                return carrega_pdf(temp_path)
+            elif tipo_arquivo == "Csv":
+                return carrega_csv(temp_path)
+            elif tipo_arquivo == "Txt":
+                return carrega_txt(temp_path)
+        finally:
+            # Sempre tentar remover o arquivo temporário
             try:
                 os.unlink(temp_path)
-            except:
-                pass
-                
-            return resultado
-            
-        elif tipo_arquivo == "Csv":
-            with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as temp:
-                temp.write(arquivo.read())
-                temp_path = temp.name
-                
-            # Ler o arquivo CSV
-            resultado = carrega_csv(temp_path)
-            
-            # Limpar o arquivo temporário
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
-                
-            return resultado
-            
-        elif tipo_arquivo == "Txt":
-            with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as temp:
-                temp.write(arquivo.read())
-                temp_path = temp.name
-                
-            # Ler o arquivo TXT
-            resultado = carrega_txt(temp_path)
-            
-            # Limpar o arquivo temporário
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
-                
-            return resultado
+            except Exception as cleanup_err:
+                logger.error(f"Erro ao limpar arquivo temporário: {cleanup_err}")
+    
     except Exception as e:
+        logger.error(f"Erro ao carregar arquivo: {e}")
         return f"❌ Erro ao carregar arquivo: {e}"
 
 def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     """Carrega o modelo de IA e prepara o sistema para responder com base no documento."""
-    # Se não tiver API key, usa a da session_state
-    if not api_key:
-        api_key = st.session_state.get(f'api_key_{provedor}', '')
-    
-    if not api_key:
-        st.error("⚠️ API Key não fornecida. Adicione uma chave válida para continuar.")
-        return
-    
-    documento = carrega_arquivos(tipo_arquivo, arquivo)
-    
-    if not documento or isinstance(documento, str) and documento.startswith("❌"):
-        st.error(documento if documento else "Documento não pôde ser carregado")
-        return
-    
-    # Limitar o documento para casos de textos muito grandes
-    max_chars = 8000
-    documento_truncado = documento
-    if len(documento) > max_chars:
-        documento_truncado = documento[:max_chars] + f"\n\n[Documento truncado - exibindo {max_chars} de {len(documento)} caracteres]"
-    
-    system_message = f"""
-    Você é um assistente chamado Analyse Doc especializado em analisar documentos.
-    Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
-    
-    ####
-    {documento_truncado}
-    ####
-    
-    Utilize as informações fornecidas para basear as suas respostas.
-    Se a pergunta não puder ser respondida com as informações do documento, informe isso ao usuário.
-    """
-    
-    template = ChatPromptTemplate.from_messages([
-        ('system', system_message),
-        ('placeholder', '{chat_history}'),
-        ('user', '{input}')
-    ])
-    
     try:
+        # Se não tiver API key, usa a da session_state
+        if not api_key:
+            api_key = st.session_state.get(f'api_key_{provedor}', '')
+        
+        if not api_key:
+            st.error("⚠️ API Key não fornecida. Adicione uma chave válida para continuar.")
+            return
+        
+        # Carregar documento com log detalhado
+        documento = carrega_arquivos(tipo_arquivo, arquivo)
+        
+        if not documento or documento.startswith("❌"):
+            st.error(documento if documento else "Documento não pôde ser carregado")
+            return
+        
+        # Gerar resumo inicial
+        resumo = gera_resumo(documento)
+        
+        # Limitar o documento para casos de textos muito grandes
+        max_chars = 8000
+        documento_truncado = documento
+        if len(documento) > max_chars:
+            documento_truncado = documento[:max_chars] + f"\n\n[Documento truncado - exibindo {max_chars} de {len(documento)} caracteres]"
+        
+        system_message = f"""
+        Você é um assistente chamado Analyse Doc especializado em analisar documentos.
+        Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
+        
+        ####
+        {documento_truncado}
+        ####
+        
+        Resumo inicial do documento:
+        {resumo}
+        
+        Utilize as informações fornecidas para basear as suas respostas.
+        Se a pergunta não puder ser respondida com as informações do documento, informe isso ao usuário.
+        """
+        
+        template = ChatPromptTemplate.from_messages([
+            ('system', system_message),
+            ('placeholder', '{chat_history}'),
+            ('user', '{input}')
+        ])
+        
         chat = CONFIG_MODELOS[provedor]['chat'](
             model=modelo, 
             api_key=api_key,
@@ -276,11 +171,17 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         st.session_state['chain'] = chain
         st.session_state['tipo_arquivo'] = tipo_arquivo
         st.session_state['tamanho_documento'] = len(documento)
+        st.session_state['resumo_documento'] = resumo
         
         # Avisa o usuário que o documento foi carregado com sucesso
         st.success(f"✅ Documento {tipo_arquivo} carregado com sucesso! ({len(documento)} caracteres)")
+        
+        # Exibir resumo automático
+        st.info(f"📄 Resumo Automático:\n{resumo}")
+        
     except Exception as e:
-        st.error(f"❌ Erro ao carregar o modelo: {e}")
+        logger.error(f"Erro ao carregar modelo: {e}")
+        st.error(f"❌ Erro ao processar documento: {e}")
 
 def pagina_chat():
     """Interface principal do chat."""
@@ -289,6 +190,11 @@ def pagina_chat():
     # Exibir informações do documento se disponível
     if 'tipo_arquivo' in st.session_state and 'tamanho_documento' in st.session_state:
         st.info(f"📄 **Documento:** {st.session_state['tipo_arquivo']} | **Tamanho:** {st.session_state['tamanho_documento']} caracteres")
+    
+    # Exibir resumo se disponível
+    if 'resumo_documento' in st.session_state:
+        with st.expander("Resumo do Documento"):
+            st.write(st.session_state['resumo_documento'])
     
     chain = st.session_state.get('chain')
     if chain is None:
@@ -344,8 +250,6 @@ def sidebar():
         # Interface de acordo com o tipo de arquivo
         if tipo_arquivo == 'Site':
             arquivo = st.text_input('Digite a URL do site', placeholder="https://exemplo.com")
-        elif tipo_arquivo == 'Youtube':
-            arquivo = st.text_input('Digite a URL do vídeo', placeholder="https://youtube.com/watch?v=ID_VIDEO")
         elif tipo_arquivo == 'Pdf':
             arquivo = st.file_uploader('Faça o upload do arquivo PDF', type=['pdf'])
         elif tipo_arquivo == 'Csv':
