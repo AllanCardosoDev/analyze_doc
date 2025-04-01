@@ -255,7 +255,12 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     ])
     
     try:
-        chat = CONFIG_MODELOS[provedor]["chat"](model=modelo, api_key=api_key)
+        # Configuração de temperatura
+        chat = CONFIG_MODELOS[provedor]["chat"](
+            model=modelo, 
+            api_key=api_key,
+            temperature=0.7  # Adiciona alguma criatividade mas mantém respostas consistentes
+        )
         chain = template | chat
         st.session_state["chain"] = chain
         st.session_state["documento_completo"] = documento
@@ -312,31 +317,23 @@ def pagina_chat():
         
         try:
             with st.spinner("Pensando..."):
-                resposta_stream = chain.stream({
+                # Usando invoke em vez de stream para evitar problemas de concatenação
+                resposta = chain.invoke({
                     "input": input_usuario,
                     "chat_history": memoria.buffer_as_messages
                 })
                 
-                placeholder = st.container()
-                resposta_texto = ""
-                
-                # Exibição da resposta em stream com uma aparência melhor
-                with placeholder:
-                    message_placeholder = st.empty()
-                    for chunk in resposta_stream:
-                        resposta_texto += chunk
-                        message_placeholder.markdown(
-                            f'<div class="chat-message-ai">{resposta_texto}</div>', 
-                            unsafe_allow_html=True
-                        )
+                # Exibição da resposta
+                st.markdown(f'<div class="chat-message-ai">{resposta.content}</div>', unsafe_allow_html=True)
             
             # Adicionar à memória
             memoria.chat_memory.add_user_message(input_usuario)
-            memoria.chat_memory.add_ai_message(resposta_texto)
+            memoria.chat_memory.add_ai_message(resposta.content)
             st.session_state["memoria"] = memoria
             
         except Exception as e:
             st.error(f"❌ Erro ao processar resposta: {e}")
+            st.error(f"Detalhes: {traceback.format_exc()}")
 
 def sidebar():
     """Cria a barra lateral para upload de arquivos e seleção de modelos."""
