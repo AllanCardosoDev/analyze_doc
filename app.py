@@ -1,7 +1,6 @@
 import tempfile
 import os
 import logging
-from time import sleep
 import streamlit as st
 from langchain.memory import ConversationBufferMemory
 
@@ -14,12 +13,12 @@ from loaders import (
     carrega_pdf, 
     carrega_csv, 
     carrega_txt,
-    gera_resumo
+    carrega_docx
 )
 
 # Configurações de logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -57,12 +56,22 @@ st.markdown("""
         margin-bottom: 0.5rem;
         border-left: 3px solid #616161;
     }
+    
+    .stButton > button {
+        background-color: #1E88E5;
+        color: white;
+        font-weight: bold;
+    }
+    
+    .stButton > button:hover {
+        background-color: #1565C0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # Constantes
 TIPOS_ARQUIVOS_VALIDOS = [
-    'Site', 'Pdf', 'Csv', 'Txt'
+    'Site', 'Pdf', 'Docx', 'Csv', 'Txt'
 ]
 
 CONFIG_MODELOS = {
@@ -98,6 +107,8 @@ def carrega_arquivos(tipo_arquivo, arquivo):
         try:
             if tipo_arquivo == "Pdf":
                 return carrega_pdf(temp_path)
+            elif tipo_arquivo == "Docx":
+                return carrega_docx(temp_path)
             elif tipo_arquivo == "Csv":
                 return carrega_csv(temp_path)
             elif tipo_arquivo == "Txt":
@@ -131,9 +142,6 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
             st.error(documento if documento else "Documento não pôde ser carregado")
             return
         
-        # Gerar resumo inicial
-        resumo = gera_resumo(documento)
-        
         # Limitar o documento para casos de textos muito grandes
         max_chars = 8000
         documento_truncado = documento
@@ -148,11 +156,9 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         {documento_truncado}
         ####
         
-        Resumo inicial do documento:
-        {resumo}
-        
         Utilize as informações fornecidas para basear as suas respostas.
         Se a pergunta não puder ser respondida com as informações do documento, informe isso ao usuário.
+        Seja detalhado e preciso em suas análises, sempre fundamentando suas respostas no conteúdo do documento.
         """
         
         template = ChatPromptTemplate.from_messages([
@@ -171,13 +177,9 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         st.session_state['chain'] = chain
         st.session_state['tipo_arquivo'] = tipo_arquivo
         st.session_state['tamanho_documento'] = len(documento)
-        st.session_state['resumo_documento'] = resumo
         
         # Avisa o usuário que o documento foi carregado com sucesso
         st.success(f"✅ Documento {tipo_arquivo} carregado com sucesso! ({len(documento)} caracteres)")
-        
-        # Exibir resumo automático
-        st.info(f"📄 Resumo Automático:\n{resumo}")
         
     except Exception as e:
         logger.error(f"Erro ao carregar modelo: {e}")
@@ -191,14 +193,20 @@ def pagina_chat():
     if 'tipo_arquivo' in st.session_state and 'tamanho_documento' in st.session_state:
         st.info(f"📄 **Documento:** {st.session_state['tipo_arquivo']} | **Tamanho:** {st.session_state['tamanho_documento']} caracteres")
     
-    # Exibir resumo se disponível
-    if 'resumo_documento' in st.session_state:
-        with st.expander("Resumo do Documento"):
-            st.write(st.session_state['resumo_documento'])
-    
     chain = st.session_state.get('chain')
     if chain is None:
         st.warning("⚠️ Carregue um documento e inicialize o Analyse Doc para começar.")
+        
+        with st.expander("ℹ️ Como usar o Analyse Doc"):
+            st.markdown("""
+            1. **Selecione o tipo de documento** na barra lateral.
+            2. **Carregue o documento** (arquivo ou URL).
+            3. **Escolha o modelo de IA** que deseja usar.
+            4. **Adicione sua API Key** do provedor escolhido.
+            5. **Inicialize o Analyse Doc** para começar a análise.
+            6. **Faça perguntas** sobre o documento carregado.
+            """)
+            
         st.stop()
     
     # Recupera a memória da sessão
@@ -212,7 +220,7 @@ def pagina_chat():
             st.markdown(f'<div class="chat-message-human">{mensagem.content}</div>', unsafe_allow_html=True)
     
     # Campo de entrada do usuário
-    input_usuario = st.chat_input("Fale com o Analyse Doc sobre o documento carregado")
+    input_usuario = st.chat_input("Faça perguntas sobre o documento carregado")
     
     if input_usuario:
         # Exibe a mensagem do usuário
@@ -220,18 +228,32 @@ def pagina_chat():
         
         try:
             with st.spinner("Analisando documento..."):
-                # Usa invoke para evitar problemas com streaming
-                resposta = chain.invoke({
+                # Configuração para streaming de resposta
+                resposta_container = st.empty()
+                resposta_parcial = []
+                
+                for chunk in chain.stream({
                     "input": input_usuario,
                     "chat_history": memoria.buffer_as_messages
-                })
+                }):
+                    # Adicionar o chunk à resposta parcial
+                    if hasattr(chunk, 'content'):
+                        resposta_parcial.append(chunk.content)
+                    else:
+                        resposta_parcial.append(str(chunk))
+                    
+                    # Atualizar a UI com a resposta parcial
+                    resposta_container.markdown(
+                        f'<div class="chat-message-ai">{"".join(resposta_parcial)}</div>',
+                        unsafe_allow_html=True
+                    )
                 
-                # Exibe a resposta
-                st.markdown(f'<div class="chat-message-ai">{resposta.content}</div>', unsafe_allow_html=True)
+                # Obter a resposta completa
+                resposta_completa = "".join(resposta_parcial)
             
             # Adiciona à memória
             memoria.chat_memory.add_user_message(input_usuario)
-            memoria.chat_memory.add_ai_message(resposta.content)
+            memoria.chat_memory.add_ai_message(resposta_completa)
             st.session_state['memoria'] = memoria
             
         except Exception as e:
@@ -252,6 +274,8 @@ def sidebar():
             arquivo = st.text_input('Digite a URL do site', placeholder="https://exemplo.com")
         elif tipo_arquivo == 'Pdf':
             arquivo = st.file_uploader('Faça o upload do arquivo PDF', type=['pdf'])
+        elif tipo_arquivo == 'Docx':
+            arquivo = st.file_uploader('Faça o upload do arquivo Word', type=['docx'])
         elif tipo_arquivo == 'Csv':
             arquivo = st.file_uploader('Faça o upload do arquivo CSV', type=['csv'])
         elif tipo_arquivo == 'Txt':
@@ -280,6 +304,15 @@ def sidebar():
         if st.button('Apagar Histórico', use_container_width=True):
             st.session_state['memoria'] = ConversationBufferMemory()
             st.success("✅ Histórico de conversa apagado!")
+    
+    # Adicionar informações sobre o projeto
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Sobre o Analyse Doc")
+    st.sidebar.info(
+        "Analyse Doc é uma ferramenta de análise de documentos "
+        "baseada em IA que permite extrair informações relevantes "
+        "e responder perguntas sobre o conteúdo dos documentos."
+    )
 
 def main():
     """Função principal."""
