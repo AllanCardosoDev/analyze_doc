@@ -650,7 +650,7 @@ def pagina_chat():
         # Adicionar demonstração visual
         st.markdown("""
         <div style="text-align: center; padding: 20px; background-color: #f8f9fa; border-radius: 10px; margin: 20px 0;">
-            <img src="https://cdn.pixabay.com/photo/2016/12/23/07/01/documents-1926996_960_720.png" width="200">
+            <span style="font-size: 80px;">📄</span>
             <h3>Como usar o Analyse Doc</h3>
             <ol style="text-align: left; display: inline-block;">
                 <li>Na barra lateral, selecione a aba <b>Upload de Arquivos</b></li>
