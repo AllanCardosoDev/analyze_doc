@@ -30,60 +30,44 @@ st.set_page_config(
     layout="wide"
 )
 
-# Aplicar estilo personalizado - Corrigindo contraste de texto
+# Aplicar estilo padrão de chat, sem contraste excessivo
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.5rem;
-        font-weight: 800;
-        color: #1E88E5;
+        font-size: 2rem;
+        font-weight: 600;
+        color: #4F8BF9;
         text-align: center;
         margin-bottom: 1rem;
     }
     
-    /* Estilos para mensagens de chat com melhor contraste */
+    /* Estilos para chat padrão, sem tanto contraste */
     .chat-message-ai {
-        background-color: #E3F2FD;
-        border-radius: 10px;
-        padding: 1rem;
+        padding: 0.5rem 1rem;
         margin-bottom: 0.5rem;
-        border-left: 3px solid #1E88E5;
-        color: #333333; /* Texto escuro para contraste */
+        border-radius: 0.5rem;
+        background-color: rgba(100, 149, 237, 0.1);
+        border-left: 2px solid #4F8BF9;
     }
     
     .chat-message-human {
-        background-color: #F5F5F5;
-        border-radius: 10px;
-        padding: 1rem;
+        padding: 0.5rem 1rem;
         margin-bottom: 0.5rem;
-        border-left: 3px solid #616161;
-        color: #333333; /* Texto escuro para contraste */
+        border-radius: 0.5rem;
+        background-color: rgba(220, 220, 220, 0.2);
+        border-left: 2px solid #808080;
     }
     
-    /* Melhorando contraste de texto em todo o app */
-    .stTextInput label, .stSelectbox label {
-        color: #FFFFFF !important;
-    }
-    
-    .stTextInput input, .stSelectbox select {
-        color: #333333 !important;
-        background-color: #FFFFFF !important;
-    }
-    
+    /* Botões com estilo mais suave */
     .stButton > button {
-        background-color: #1E88E5;
+        background-color: #4F8BF9;
         color: white;
-        font-weight: bold;
+        font-weight: 500;
+        border-radius: 0.3rem;
     }
     
     .stButton > button:hover {
-        background-color: #1565C0;
-    }
-    
-    /* Corrigindo contraste no chat input */
-    .stChatInput textarea {
-        color: #333333 !important;
-        background-color: #FFFFFF !important;
+        background-color: #3A66CC;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -205,12 +189,12 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         st.error(f"❌ Erro ao processar documento: {e}")
 
 def pagina_chat():
-    """Interface principal do chat - Simplificada, mostrando apenas o chat."""
+    """Interface principal do chat - Simplificada, estilo chat padrão."""
     st.markdown('<h1 class="main-header">📑 Analyse Doc</h1>', unsafe_allow_html=True)
     
     chain = st.session_state.get('chain')
     if chain is None:
-        st.warning("⚠️ Carregue um documento e inicialize o Analyse Doc para começar.")
+        st.info("Carregue um documento na barra lateral para começar a conversar.")
         
         with st.expander("ℹ️ Como usar o Analyse Doc"):
             st.markdown("""
@@ -227,44 +211,50 @@ def pagina_chat():
     # Recupera a memória da sessão
     memoria = st.session_state.get('memoria', ConversationBufferMemory())
     
-    # Exibe o histórico de mensagens com estilo personalizado e garante texto legível
-    for mensagem in memoria.buffer_as_messages:
-        if mensagem.type == 'ai':
-            st.markdown(f'<div class="chat-message-ai">{mensagem.content}</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="chat-message-human">{mensagem.content}</div>', unsafe_allow_html=True)
+    # Cria container para o chat (estilo mais padrão)
+    chat_container = st.container()
+    
+    with chat_container:
+        # Exibe o histórico de mensagens com estilo de chat padrão
+        for mensagem in memoria.buffer_as_messages:
+            if mensagem.type == 'ai':
+                st.markdown(f'<div class="chat-message-ai">{mensagem.content}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="chat-message-human">{mensagem.content}</div>', unsafe_allow_html=True)
     
     # Campo de entrada do usuário
     input_usuario = st.chat_input("Faça perguntas sobre o documento carregado")
     
     if input_usuario:
         # Exibe a mensagem do usuário
-        st.markdown(f'<div class="chat-message-human">{input_usuario}</div>', unsafe_allow_html=True)
+        with chat_container:
+            st.markdown(f'<div class="chat-message-human">{input_usuario}</div>', unsafe_allow_html=True)
         
         try:
-            with st.spinner("Analisando documento..."):
+            with st.spinner("Analisando..."):
                 # Configuração para streaming de resposta
-                resposta_container = st.empty()
-                resposta_parcial = []
-                
-                for chunk in chain.stream({
-                    "input": input_usuario,
-                    "chat_history": memoria.buffer_as_messages
-                }):
-                    # Adicionar o chunk à resposta parcial
-                    if hasattr(chunk, 'content'):
-                        resposta_parcial.append(chunk.content)
-                    else:
-                        resposta_parcial.append(str(chunk))
+                with chat_container:
+                    resposta_container = st.empty()
+                    resposta_parcial = []
                     
-                    # Atualizar a UI com a resposta parcial
-                    resposta_container.markdown(
-                        f'<div class="chat-message-ai">{"".join(resposta_parcial)}</div>',
-                        unsafe_allow_html=True
-                    )
-                
-                # Obter a resposta completa
-                resposta_completa = "".join(resposta_parcial)
+                    for chunk in chain.stream({
+                        "input": input_usuario,
+                        "chat_history": memoria.buffer_as_messages
+                    }):
+                        # Adicionar o chunk à resposta parcial
+                        if hasattr(chunk, 'content'):
+                            resposta_parcial.append(chunk.content)
+                        else:
+                            resposta_parcial.append(str(chunk))
+                        
+                        # Atualizar a UI com a resposta parcial
+                        resposta_container.markdown(
+                            f'<div class="chat-message-ai">{"".join(resposta_parcial)}</div>',
+                            unsafe_allow_html=True
+                        )
+                    
+                    # Obter a resposta completa
+                    resposta_completa = "".join(resposta_parcial)
             
             # Adiciona à memória
             memoria.chat_memory.add_user_message(input_usuario)
@@ -272,7 +262,8 @@ def pagina_chat():
             st.session_state['memoria'] = memoria
             
         except Exception as e:
-            st.error(f"❌ Erro ao processar resposta: {e}")
+            with chat_container:
+                st.error(f"Erro ao processar resposta: {e}")
 
 def sidebar():
     """Cria a barra lateral para upload de arquivos e seleção de modelos."""
@@ -311,30 +302,25 @@ def sidebar():
     col1, col2 = st.sidebar.columns(2)
     
     with col1:
-        if st.button('Inicializar Analyse Doc', use_container_width=True):
+        if st.button('Inicializar', use_container_width=True):
             with st.spinner("Carregando documento..."):
                 carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
     
     with col2:
-        if st.button('Apagar Histórico', use_container_width=True):
+        if st.button('Limpar Chat', use_container_width=True):
             st.session_state['memoria'] = ConversationBufferMemory()
-            st.sidebar.success("✅ Histórico de conversa apagado!")
+            st.sidebar.success("✅ Histórico apagado")
     
-    # Adicionar informações sobre o documento na sidebar (não na área principal)
+    # Adicionar informações sobre o documento na sidebar
     if 'tipo_arquivo' in st.session_state and 'tamanho_documento' in st.session_state:
         st.sidebar.markdown("---")
-        st.sidebar.markdown("### Documento Carregado")
-        st.sidebar.info(f"📄 **Tipo:** {st.session_state['tipo_arquivo']}\n"
-                         f"📊 **Tamanho:** {st.session_state['tamanho_documento']} caracteres")
+        st.sidebar.caption("DOCUMENTO ATUAL")
+        st.sidebar.info(f"📄 {st.session_state['tipo_arquivo']} • {st.session_state['tamanho_documento']} caracteres")
     
-    # Adicionar informações sobre o projeto
+    # Informações do projeto (simplificado)
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### Sobre o Analyse Doc")
-    st.sidebar.info(
-        "Analyse Doc é uma ferramenta de análise de documentos "
-        "baseada em IA que permite extrair informações relevantes "
-        "e responder perguntas sobre o conteúdo dos documentos."
-    )
+    st.sidebar.caption("SOBRE")
+    st.sidebar.info("Analyse Doc • Análise de documentos com IA")
 
 def main():
     """Função principal."""
