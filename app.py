@@ -1,4 +1,11 @@
-import tempfile
+def main():
+    """Função principal que configura a aplicação."""
+    with st.sidebar:
+        sidebar()
+    pagina_chat()
+
+if __name__ == "__main__":
+    main()import tempfile
 import os
 import streamlit as st
 from langchain.memory import ConversationBufferMemory
@@ -7,6 +14,7 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from loaders import carrega_site, carrega_youtube, carrega_pdf, carrega_docx, carrega_csv, carrega_txt
 from loaders import gera_resumo, gera_pdf_resumo, traduz_texto
+from resumo import gerar_resumo_documento
 from dotenv import load_dotenv
 import base64
 from datetime import datetime
@@ -152,6 +160,93 @@ st.markdown("""
         visibility: visible;
         opacity: 1;
     }
+    
+    /* Novos estilos para o resumo automático */
+    .resumo-panel {
+        background-color: #e3f2fd;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 20px;
+        border-left: 4px solid #1976d2;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    }
+    
+    .resumo-panel h3 {
+        color: #1976d2;
+        font-size: 1.2rem;
+        margin-bottom: 10px;
+    }
+    
+    .meta-info {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        margin-bottom: 15px;
+        font-size: 0.9rem;
+    }
+    
+    .meta-info span {
+        background-color: #bbdefb;
+        padding: 5px 10px;
+        border-radius: 15px;
+    }
+    
+    .resumo-content {
+        background-color: white;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+        max-height: 300px;
+        overflow-y: auto;
+        border: 1px solid #e0e0e0;
+    }
+    
+    .resumo-actions {
+        display: flex;
+        gap: 10px;
+    }
+    
+    /* Estilos para a seção de resumo automático */
+    .auto-resumo-container {
+        background-color: #f5f5f5;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 20px 0;
+        border: 1px solid #e0e0e0;
+    }
+    
+    .auto-resumo-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #e0e0e0;
+        padding-bottom: 10px;
+    }
+    
+    .auto-resumo-content {
+        background-color: white;
+        border-radius: 8px;
+        padding: 15px;
+        border: 1px solid #e0e0e0;
+        margin-bottom: 15px;
+    }
+    
+    .auto-resumo-secao {
+        margin-bottom: 15px;
+    }
+    
+    .auto-resumo-secao h4 {
+        color: #1976d2;
+        margin-bottom: 8px;
+        font-size: 1.1rem;
+    }
+    
+    .separador {
+        height: 1px;
+        background-color: #e0e0e0;
+        margin: 15px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -262,6 +357,48 @@ def carrega_arquivos(tipo_arquivo, arquivo):
         st.error(f"Stack trace: {stack_trace}")
         return f"❌ Erro ao carregar arquivo: {e}"
 
+def gerar_resumo_automatico(documento, tipo_arquivo, modelo, provedor, api_key):
+    """
+    Gera um resumo completo do documento utilizando o modelo de IA.
+    
+    Args:
+        documento (str): O texto do documento
+        tipo_arquivo (str): Tipo do arquivo (PDF, DOCX, etc.)
+        modelo (str): Nome do modelo de IA
+        provedor (str): Nome do provedor (Groq, OpenAI)
+        api_key (str): Chave de API para o modelo
+    
+    Returns:
+        dict: Dicionário com o resumo e metadados
+    """
+    try:
+        # Iniciar o modelo de IA
+        chat = CONFIG_MODELOS[provedor]["chat"](model=modelo, api_key=api_key)
+        
+        # Configurações para o resumo
+        max_length = st.session_state.get("max_resumo_length", 1500)
+        idioma_codigo = st.session_state.get("idioma_codigo", "pt")
+        
+        # Dicionário de configurações para o resumo
+        config = {
+            "max_length": max_length,
+            "idioma": idioma_codigo,
+            "usar_llm": st.session_state.get("usar_llm_resumo", True),
+            "llm_chain": chat,
+            "tradutor_disponivel": st.session_state.get("tradutor_disponivel", False),
+            "incluir_topicos": st.session_state.get("incluir_topicos", True),
+            "incluir_termos": st.session_state.get("incluir_termos", True),
+            "analisar_estrutura": st.session_state.get("analisar_estrutura", False)
+        }
+        
+        # Gerar o resumo do documento
+        resultado_resumo = gerar_resumo_documento(documento, tipo_arquivo, config)
+        
+        return resultado_resumo
+    except Exception as e:
+        st.error(f"Erro ao gerar o resumo automático: {e}")
+        return None
+
 def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     """Carrega o modelo de IA e prepara o sistema para responder com base no documento."""
     # Se não tiver API key, tenta pegar das variáveis de ambiente
@@ -333,6 +470,20 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
             "provedor": provedor
         }
         
+        # Gerar resumo automático do documento se solicitado
+        if st.session_state.get("gerar_resumo", False):
+            with st.spinner("Gerando resumo automático do documento..."):
+                resultado_resumo = gerar_resumo_automatico(
+                    documento, tipo_arquivo, modelo, provedor, api_key
+                )
+                
+                if resultado_resumo:
+                    st.session_state["resumo_documento"] = resultado_resumo["resumo"]
+                    st.session_state["resumo_pdf_bytes"] = resultado_resumo["pdf_bytes"]
+                    st.session_state["resumo_filename"] = f"resumo_{tipo_arquivo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                    st.session_state["resumo_seccoes"] = resultado_resumo.get("seccoes", {})
+                    st.success("✅ Resumo automático gerado com sucesso!")
+        
         st.success(f"✅ Modelo {modelo} carregado com sucesso! Documento pronto para análise.")
     except Exception as e:
         st.error(f"❌ Erro ao carregar o modelo: {e}")
@@ -366,11 +517,71 @@ def create_download_link(pdf_bytes, filename):
     '''
     return href
 
+def exibir_resumo_automatico():
+    """Exibe o resumo automático completo do documento."""
+    if "resumo_documento" in st.session_state:
+        meta = st.session_state.get("documento_meta", {})
+        resumo = st.session_state["resumo_documento"]
+        resumo_seccoes = st.session_state.get("resumo_seccoes", {})
+        
+        st.markdown('<div class="auto-resumo-container">', unsafe_allow_html=True)
+        
+        # Cabeçalho do resumo
+        st.markdown('<div class="auto-resumo-header">', unsafe_allow_html=True)
+        st.markdown('### 📄 Resumo Automático do Documento')
+        
+        # Se temos um PDF gerado, mostrar botão de download
+        if "resumo_pdf_bytes" in st.session_state and "resumo_filename" in st.session_state:
+            download_link = create_download_link(
+                st.session_state["resumo_pdf_bytes"], 
+                st.session_state["resumo_filename"]
+            )
+            st.markdown(download_link, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Metadados do documento
+        st.markdown('<div class="meta-info">', unsafe_allow_html=True)
+        st.markdown(f'<span>Tipo: {meta.get("tipo", "Desconhecido")}</span>', unsafe_allow_html=True)
+        st.markdown(f'<span>Processado em: {meta.get("data_processamento", "")}</span>', unsafe_allow_html=True)
+        st.markdown(f'<span>Tamanho: {meta.get("tamanho", 0)} caracteres</span>', unsafe_allow_html=True)
+        st.markdown(f'<span>Modelo: {meta.get("modelo", "")} ({meta.get("provedor", "")})</span>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Resumo principal
+        st.markdown('<div class="auto-resumo-secao">', unsafe_allow_html=True)
+        st.markdown('<h4>📝 Síntese Geral</h4>', unsafe_allow_html=True)
+        st.markdown('<div class="auto-resumo-content">', unsafe_allow_html=True)
+        st.markdown(resumo)
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Exibir seções específicas se disponíveis
+        if resumo_seccoes:
+            st.markdown('<div class="separador"></div>', unsafe_allow_html=True)
+            st.markdown('<div class="auto-resumo-secao">', unsafe_allow_html=True)
+            st.markdown('<h4>🔍 Análise por Seções</h4>', unsafe_allow_html=True)
+            
+            for titulo, conteudo in resumo_seccoes.items():
+                st.markdown(f'<h5>{titulo}</h5>', unsafe_allow_html=True)
+                st.markdown('<div class="auto-resumo-content">', unsafe_allow_html=True)
+                st.markdown(conteudo)
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.info("Nenhum resumo disponível. Selecione a opção 'Gerar resumo automático' antes de inicializar o modelo.")
+
 def pagina_chat():
     """Cria a interface do chat e gerencia a conversa do usuário."""
     st.markdown('<h1 class="main-header">📑 Analyse Doc</h1>', unsafe_allow_html=True)
     
-                # Exibir informações do documento se disponível
+    # Verificar se temos um resumo do documento para exibir
+    if "mostrar_resumo" in st.session_state and st.session_state["mostrar_resumo"]:
+        exibir_resumo_automatico()
+    
+    # Exibir informações do documento se disponível
     if "documento_meta" in st.session_state:
         meta = st.session_state["documento_meta"]
         with st.container():
@@ -386,11 +597,14 @@ def pagina_chat():
             
             with col2:
                 st.markdown('<div class="pdf-section">', unsafe_allow_html=True)
-                st.markdown('<h4>📄 Resumo do Documento</h4>', unsafe_allow_html=True)
+                st.markdown('<h4>📄 Ações do Documento</h4>', unsafe_allow_html=True)
+                
+                if st.button("📋 Mostrar/Ocultar Resumo Completo", key="btn_toggle_resumo"):
+                    st.session_state["mostrar_resumo"] = not st.session_state.get("mostrar_resumo", False)
+                    st.experimental_rerun()
                 
                 # Verificar se já temos um PDF gerado do resumo durante a inicialização
                 if "resumo_pdf_bytes" in st.session_state and "resumo_filename" in st.session_state:
-                    st.success("O resumo em PDF já foi gerado!")
                     download_link = create_download_link(
                         st.session_state["resumo_pdf_bytes"], 
                         st.session_state["resumo_filename"]
@@ -398,12 +612,9 @@ def pagina_chat():
                     st.markdown(download_link, unsafe_allow_html=True)
                 else:
                     # Botão para gerar resumo em PDF
-                    if st.button("📥 Baixar Resumo em PDF", key="btn_gerar_pdf", use_container_width=True):
+                    if st.button("📥 Gerar Resumo em PDF", key="btn_gerar_pdf", use_container_width=True):
                         with st.spinner("Gerando resumo em PDF..."):
                             try:
-                                # Importar funções explicitamente
-                                from loaders import gera_resumo, gera_pdf_resumo
-                                
                                 # Obter o texto completo do documento
                                 documento = st.session_state.get("documento_completo", "")
                                 
@@ -427,6 +638,8 @@ def pagina_chat():
                                 
                                 # Guardar o resumo na sessão para uso posterior
                                 st.session_state["resumo_documento"] = resumo
+                                st.session_state["resumo_pdf_bytes"] = pdf_bytes
+                                st.session_state["resumo_filename"] = filename
                                 
                             except Exception as e:
                                 st.error(f"Erro ao gerar o PDF: {e}")
@@ -580,11 +793,20 @@ def sidebar():
         st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
         st.markdown("### ⚙️ Processamento avançado")
         
-        # Modificar o texto do checkbox para deixar claro que o resumo será em PDF
+        # Modificar o texto do checkbox para deixar claro sobre o resumo automático
         st.checkbox(
-            "Gerar resumo automático em PDF", 
+            "Gerar resumo automático", 
             key="gerar_resumo", 
-            help="Cria um resumo do documento em PDF para download"
+            help="Cria um resumo detalhado do documento assim que for carregado",
+            value=True  # Ativado por padrão
+        )
+        
+        # Adicionar opção para usar LLM para resumo
+        st.checkbox(
+            "Usar IA para melhorar resumo", 
+            key="usar_llm_resumo", 
+            help="Utiliza o modelo de IA para gerar um resumo mais elaborado (recomendado)",
+            value=True  # Ativado por padrão
         )
         
         # Adicionar um ícone visual de PDF ao lado do slider
@@ -592,12 +814,12 @@ def sidebar():
         with col1:
             st.slider(
                 "Comprimento máximo do resumo", 
-                500, 5000, 1000, 
+                500, 5000, 1500, 
                 key="max_resumo_length",
-                help="Número máximo de caracteres no resumo do PDF"
+                help="Número máximo de caracteres no resumo"
             )
         with col2:
-            st.markdown("📄 PDF", help="O resumo será gerado em formato PDF")
+            st.markdown("📄", help="Tamanho do resumo em caracteres")
         
         idiomas = {"Português": "pt", "Inglês": "en", "Espanhol": "es", "Francês": "fr"}
         idioma_selecionado = st.selectbox(
@@ -610,6 +832,32 @@ def sidebar():
         
         # Verificar se a tradução está disponível (exige um modelo de LLM)
         st.session_state["tradutor_disponivel"] = False  # Por padrão, não disponível
+        
+        # Novas opções de resumo
+        st.markdown('<div class="pdf-option">', unsafe_allow_html=True)
+        st.markdown("#### 📊 Configurações do Resumo")
+        
+        st.checkbox(
+            "Incluir tópicos principais", 
+            key="incluir_topicos", 
+            value=True,
+            help="Identifica e lista os tópicos principais do documento"
+        )
+        
+        st.checkbox(
+            "Incluir análise de termos-chave", 
+            key="incluir_termos", 
+            value=True,
+            help="Extrai os termos mais relevantes do documento"
+        )
+        
+        st.checkbox(
+            "Analisar estrutura do documento", 
+            key="analisar_estrutura", 
+            help="Identifica seções e a estrutura geral do documento"
+        )
+        
+        st.markdown("</div>", unsafe_allow_html=True)
         
         st.checkbox(
             "Extrair entidades", 
@@ -695,47 +943,14 @@ def sidebar():
                 if st.session_state.get("gerar_resumo", False) and arquivo:
                     documento = carrega_arquivos(tipo_arquivo, arquivo)
                     if not (isinstance(documento, str) and (documento.startswith("❌") or documento.startswith("⚠️"))):
-                        with st.spinner("Gerando resumo em PDF do documento..."):
-                            try:
-                                # Corrigido: obter max_length corretamente da session_state e importar funções necessárias
-                                from loaders import gera_resumo, gera_pdf_resumo
-                                max_length = st.session_state.get("max_resumo_length", 1000)
-                                
-                                # Gerar resumo
-                                resumo = gera_resumo(documento, max_length)
-                                st.session_state["documento_processado"] = resumo
-                                
-                                # Gerar PDF automaticamente
-                                data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                                pdf_bytes = gera_pdf_resumo(
-                                    resumo, 
-                                    tipo_arquivo, 
-                                    data_atual
-                                )
-                                
-                                # Salvar para disponibilizar o download depois de carregar o modelo
-                                st.session_state["resumo_pdf_bytes"] = pdf_bytes
-                                st.session_state["resumo_filename"] = f"resumo_{tipo_arquivo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-                                
-                                st.success("✅ Resumo em PDF gerado com sucesso! O link para download estará disponível após a inicialização.")
-                            except Exception as e:
-                                st.error(f"Erro ao gerar resumo em PDF: {e}")
-                                import traceback
-                                st.error(f"Detalhes: {traceback.format_exc()}")
-                
-                # Inicia o modelo normalmente
-                carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
+                        # Iniciar o modelo e gerar resumo automático
+                        st.session_state["mostrar_resumo"] = True
+                        carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
+                else:
+                    # Iniciar o modelo normalmente
+                    carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
     
     with col2:
         if st.button("Apagar Histórico", use_container_width=True):
             st.session_state["memoria"] = ConversationBufferMemory()
             st.success("✅ Histórico de conversa apagado!")
-
-def main():
-    """Função principal que configura a aplicação."""
-    with st.sidebar:
-        sidebar()
-    pagina_chat()
-
-if __name__ == "__main__":
-    main()
