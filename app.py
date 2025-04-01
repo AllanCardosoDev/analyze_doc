@@ -1,11 +1,3 @@
-def main():
-    """Função principal que configura a aplicação."""
-    with st.sidebar:
-        sidebar()
-    pagina_chat()
-
-if __name__ == "__main__":
-    main()import tempfile
 import os
 import streamlit as st
 from langchain.memory import ConversationBufferMemory
@@ -936,7 +928,7 @@ def sidebar():
     
     col1, col2 = st.sidebar.columns(2)
     
-    with col1:
+with col1:
         if st.button("Inicializar Analyse Doc", use_container_width=True):
             with st.spinner("Carregando documento e inicializando..."):
                 # Verificar se devemos processar o documento
@@ -954,3 +946,14 @@ def sidebar():
         if st.button("Apagar Histórico", use_container_width=True):
             st.session_state["memoria"] = ConversationBufferMemory()
             st.success("✅ Histórico de conversa apagado!")
+
+
+def main():
+    """Função principal que configura a aplicação."""
+    with st.sidebar:
+        sidebar()
+    pagina_chat()
+
+if __name__ == "__main__":
+    main()
+
