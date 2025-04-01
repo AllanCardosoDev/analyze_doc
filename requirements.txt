@@ -8,4 +8,4 @@ beautifulsoup4
 pypdf
 unstructured
 fake_useragent
-youtube_transcript_api
+docx2txt
