@@ -885,50 +885,11 @@ def sidebar():
         3. Esperar algumas horas e tentar novamente
         """)
         
-        st.markdown("### 🎨 Preferências de interface")
-        theme = st.selectbox(
-            "Tema", 
-            ["Claro", "Escuro"], 
-            key="theme",
-            help="Escolha o tema da interface"
-        )
-        if theme == "Escuro":
-            st.markdown(
-                """
-                <style>
-                    .stApp {
-                        background-color: #1E1E1E;
-                        color: #FFFFFF;
-                    }
-                    .stTextInput, .stTextArea {
-                        background-color: #2D2D2D;
-                        color: #FFFFFF;
-                    }
-                    .document-info {
-                        background-color: #2D2D2D;
-                    }
-                    .chat-message-ai {
-                        background-color: #1E1E1E;
-                        border-left: 3px solid #64B5F6;
-                    }
-                    .chat-message-human {
-                        background-color: #2D2D2D;
-                    }
-                    .sidebar-section {
-                        background-color: #2D2D2D;
-                    }
-                    .main-header {
-                        color: #64B5F6;
-                    }
-                </style>
-                """,
-                unsafe_allow_html=True
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
     
     col1, col2 = st.sidebar.columns(2)
     
-with col1:
+    with col1:
         if st.button("Inicializar Analyse Doc", use_container_width=True):
             with st.spinner("Carregando documento e inicializando..."):
                 # Verificar se devemos processar o documento
@@ -942,7 +903,7 @@ with col1:
                     # Iniciar o modelo normalmente
                     carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
     
-with col2:
+    with col2:
         if st.button("Apagar Histórico", use_container_width=True):
             st.session_state["memoria"] = ConversationBufferMemory()
             st.success("✅ Histórico de conversa apagado!")
@@ -956,4 +917,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
