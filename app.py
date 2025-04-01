@@ -30,7 +30,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Aplicar estilo personalizado
+# Aplicar estilo personalizado - Corrigindo contraste de texto
 st.markdown("""
 <style>
     .main-header {
@@ -41,12 +41,14 @@ st.markdown("""
         margin-bottom: 1rem;
     }
     
+    /* Estilos para mensagens de chat com melhor contraste */
     .chat-message-ai {
         background-color: #E3F2FD;
         border-radius: 10px;
         padding: 1rem;
         margin-bottom: 0.5rem;
         border-left: 3px solid #1E88E5;
+        color: #333333; /* Texto escuro para contraste */
     }
     
     .chat-message-human {
@@ -55,6 +57,17 @@ st.markdown("""
         padding: 1rem;
         margin-bottom: 0.5rem;
         border-left: 3px solid #616161;
+        color: #333333; /* Texto escuro para contraste */
+    }
+    
+    /* Melhorando contraste de texto em todo o app */
+    .stTextInput label, .stSelectbox label {
+        color: #FFFFFF !important;
+    }
+    
+    .stTextInput input, .stSelectbox select {
+        color: #333333 !important;
+        background-color: #FFFFFF !important;
     }
     
     .stButton > button {
@@ -65,6 +78,12 @@ st.markdown("""
     
     .stButton > button:hover {
         background-color: #1565C0;
+    }
+    
+    /* Corrigindo contraste no chat input */
+    .stChatInput textarea {
+        color: #333333 !important;
+        background-color: #FFFFFF !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -179,19 +198,15 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         st.session_state['tamanho_documento'] = len(documento)
         
         # Avisa o usuário que o documento foi carregado com sucesso
-        st.success(f"✅ Documento {tipo_arquivo} carregado com sucesso! ({len(documento)} caracteres)")
+        st.sidebar.success(f"✅ Documento {tipo_arquivo} carregado com sucesso! ({len(documento)} caracteres)")
         
     except Exception as e:
         logger.error(f"Erro ao carregar modelo: {e}")
         st.error(f"❌ Erro ao processar documento: {e}")
 
 def pagina_chat():
-    """Interface principal do chat."""
+    """Interface principal do chat - Simplificada, mostrando apenas o chat."""
     st.markdown('<h1 class="main-header">📑 Analyse Doc</h1>', unsafe_allow_html=True)
-    
-    # Exibir informações do documento se disponível
-    if 'tipo_arquivo' in st.session_state and 'tamanho_documento' in st.session_state:
-        st.info(f"📄 **Documento:** {st.session_state['tipo_arquivo']} | **Tamanho:** {st.session_state['tamanho_documento']} caracteres")
     
     chain = st.session_state.get('chain')
     if chain is None:
@@ -212,7 +227,7 @@ def pagina_chat():
     # Recupera a memória da sessão
     memoria = st.session_state.get('memoria', ConversationBufferMemory())
     
-    # Exibe o histórico de mensagens com estilo personalizado
+    # Exibe o histórico de mensagens com estilo personalizado e garante texto legível
     for mensagem in memoria.buffer_as_messages:
         if mensagem.type == 'ai':
             st.markdown(f'<div class="chat-message-ai">{mensagem.content}</div>', unsafe_allow_html=True)
@@ -303,7 +318,14 @@ def sidebar():
     with col2:
         if st.button('Apagar Histórico', use_container_width=True):
             st.session_state['memoria'] = ConversationBufferMemory()
-            st.success("✅ Histórico de conversa apagado!")
+            st.sidebar.success("✅ Histórico de conversa apagado!")
+    
+    # Adicionar informações sobre o documento na sidebar (não na área principal)
+    if 'tipo_arquivo' in st.session_state and 'tamanho_documento' in st.session_state:
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### Documento Carregado")
+        st.sidebar.info(f"📄 **Tipo:** {st.session_state['tipo_arquivo']}\n"
+                         f"📊 **Tamanho:** {st.session_state['tamanho_documento']} caracteres")
     
     # Adicionar informações sobre o projeto
     st.sidebar.markdown("---")
