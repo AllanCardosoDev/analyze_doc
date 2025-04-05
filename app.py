@@ -16,6 +16,8 @@ from loaders import (
     carrega_docx
 )
 
+from document_memory import DocumentMemoryManager
+
 # Configurações de logging
 logging.basicConfig(
     level=logging.INFO,
@@ -145,24 +147,71 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
             st.error(documento if documento else "Documento não pôde ser carregado")
             return
         
-        # Limitar o documento para casos de textos muito grandes
-        max_chars = 8000
-        documento_truncado = documento
-        if len(documento) > max_chars:
-            documento_truncado = documento[:max_chars] + f"\n\n[Documento truncado - exibindo {max_chars} de {len(documento)} caracteres]"
+        # Armazenar o documento completo na sessão
+        st.session_state['documento_completo'] = documento
+        st.session_state['tamanho_documento'] = len(documento)
         
-        system_message = f"""
-        Você é um assistente chamado Analyse Doc especializado em analisar documentos.
-        Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
+        # Inicializar o gerenciador de memória de documentos
+        if 'doc_memory_manager' not in st.session_state:
+            st.session_state['doc_memory_manager'] = DocumentMemoryManager()
         
-        ####
-        {documento_truncado}
-        ####
+        # Para documentos grandes, processar usando o gerenciador de memória
+        limite_tamanho = 50000  # Aumentamos o limite para 50K caracteres
         
-        Utilize as informações fornecidas para basear as suas respostas.
-        Se a pergunta não puder ser respondida com as informações do documento, informe isso ao usuário.
-        Seja detalhado e preciso em suas análises, sempre fundamentando suas respostas no conteúdo do documento.
-        """
+        # Dependendo do tamanho do documento, usamos abordagens diferentes
+        if len(documento) > limite_tamanho:
+            # Para documentos muito grandes (mais de 50K caracteres)
+            st.session_state['usando_documento_grande'] = True
+            
+            # Processar o documento com o gerenciador de memória
+            memory_manager = st.session_state['doc_memory_manager']
+            processamento = memory_manager.process_document(documento, tipo_arquivo)
+            
+            # Obter um preview do documento para o contexto inicial
+            documento_preview = memory_manager.get_document_preview(max_chars=8000)
+            
+            # Informar o usuário sobre o uso do método para documentos grandes
+            st.sidebar.info(f"📄 Documento grande ({len(documento)} caracteres) - Usando processamento avançado com {processamento['total_chunks']} chunks.")
+            
+            # Modificar a mensagem do sistema para enfatizar que o modelo tem acesso a todo o conteúdo
+            system_message = f"""
+            Você é um assistente chamado Analyse Doc especializado em analisar documentos.
+            
+            SOBRE O DOCUMENTO:
+            - Tipo: {tipo_arquivo}
+            - Tamanho: {len(documento)} caracteres
+            - Dividido em: {processamento['total_chunks']} partes para processamento
+            
+            Este é um documento grande que foi processado usando técnicas avançadas. 
+            Você tem acesso ao documento completo através de um sistema de recuperação
+            de informações que fornecerá as partes relevantes do documento para cada pergunta.
+            
+            Aqui está um preview do conteúdo para você entender o contexto do documento:
+            
+            ####
+            {documento_preview}
+            ####
+            
+            Utilize as informações fornecidas para basear as suas respostas.
+            Se a pergunta não puder ser respondida com as informações do documento, informe isso ao usuário.
+            Seja detalhado e preciso em suas análises, sempre fundamentando suas respostas no conteúdo do documento.
+            """
+        else:
+            # Para documentos de tamanho moderado, usamos o documento completo
+            st.session_state['usando_documento_grande'] = False
+            
+            system_message = f"""
+            Você é um assistente chamado Analyse Doc especializado em analisar documentos.
+            Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
+            
+            ####
+            {documento}
+            ####
+            
+            Utilize as informações fornecidas para basear as suas respostas.
+            Se a pergunta não puder ser respondida com as informações do documento, informe isso ao usuário.
+            Seja detalhado e preciso em suas análises, sempre fundamentando suas respostas no conteúdo do documento.
+            """
         
         template = ChatPromptTemplate.from_messages([
             ('system', system_message),
@@ -187,6 +236,47 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
     except Exception as e:
         logger.error(f"Erro ao carregar modelo: {e}")
         st.error(f"❌ Erro ao processar documento: {e}")
+
+def processar_pergunta_documento_grande(input_usuario, chain):
+    """Processa perguntas para documentos grandes com recuperação de contexto."""
+    try:
+        # Obter o gerenciador de memória de documentos
+        memory_manager = st.session_state.get('doc_memory_manager')
+        if not memory_manager:
+            return "Erro: Gerenciador de memória de documentos não inicializado."
+        
+        # Recuperar chunks relevantes para a pergunta
+        chunks_relevantes = memory_manager.retrieve_relevant_chunks(input_usuario)
+        
+        # Combinar o conteúdo dos chunks relevantes
+        contexto_relevante = "\n\n".join([chunk.page_content for chunk in chunks_relevantes])
+        
+        # Criar um prompt específico para esta pergunta
+        prompt_especifico = f"""
+        Com base nas seguintes seções do documento, responda à pergunta do usuário:
+        
+        SEÇÕES RELEVANTES DO DOCUMENTO:
+        {contexto_relevante}
+        
+        PERGUNTA DO USUÁRIO:
+        {input_usuario}
+        
+        Responda de forma detalhada e precisa, citando as informações relevantes do documento.
+        Se a pergunta não puder ser respondida com as informações fornecidas, informe isso ao usuário.
+        """
+        
+        # Usar o chain para gerar a resposta
+        resposta = ""
+        for chunk in chain.stream({"input": prompt_especifico, "chat_history": st.session_state['memoria'].buffer_as_messages}):
+            if hasattr(chunk, 'content'):
+                resposta += chunk.content
+            else:
+                resposta += str(chunk)
+            yield resposta
+        
+    except Exception as e:
+        logger.error(f"Erro ao processar pergunta para documento grande: {e}")
+        yield f"Erro ao processar sua pergunta: {e}"
 
 def pagina_chat():
     """Interface principal do chat - Simplificada, estilo chat padrão."""
@@ -235,26 +325,37 @@ def pagina_chat():
                 # Configuração para streaming de resposta
                 with chat_container:
                     resposta_container = st.empty()
-                    resposta_parcial = []
                     
-                    for chunk in chain.stream({
-                        "input": input_usuario,
-                        "chat_history": memoria.buffer_as_messages
-                    }):
-                        # Adicionar o chunk à resposta parcial
-                        if hasattr(chunk, 'content'):
-                            resposta_parcial.append(chunk.content)
-                        else:
-                            resposta_parcial.append(str(chunk))
+                    # Verificar se estamos usando documento grande
+                    if st.session_state.get('usando_documento_grande', False):
+                        # Processar usando a abordagem para documentos grandes
+                        for resposta_parcial in processar_pergunta_documento_grande(input_usuario, chain):
+                            resposta_container.markdown(
+                                f'<div class="chat-message-ai">{resposta_parcial}</div>',
+                                unsafe_allow_html=True
+                            )
+                        resposta_completa = resposta_parcial
+                    else:
+                        # Abordagem padrão para documentos menores
+                        resposta_parcial = []
+                        for chunk in chain.stream({
+                            "input": input_usuario,
+                            "chat_history": memoria.buffer_as_messages
+                        }):
+                            # Adicionar o chunk à resposta parcial
+                            if hasattr(chunk, 'content'):
+                                resposta_parcial.append(chunk.content)
+                            else:
+                                resposta_parcial.append(str(chunk))
+                            
+                            # Atualizar a UI com a resposta parcial
+                            resposta_container.markdown(
+                                f'<div class="chat-message-ai">{"".join(resposta_parcial)}</div>',
+                                unsafe_allow_html=True
+                            )
                         
-                        # Atualizar a UI com a resposta parcial
-                        resposta_container.markdown(
-                            f'<div class="chat-message-ai">{"".join(resposta_parcial)}</div>',
-                            unsafe_allow_html=True
-                        )
-                    
-                    # Obter a resposta completa
-                    resposta_completa = "".join(resposta_parcial)
+                        # Obter a resposta completa
+                        resposta_completa = "".join(resposta_parcial)
             
             # Adiciona à memória
             memoria.chat_memory.add_user_message(input_usuario)
@@ -269,7 +370,7 @@ def sidebar():
     """Cria a barra lateral para upload de arquivos e seleção de modelos."""
     st.sidebar.header("🛠️ Configurações")
     
-    tabs = st.sidebar.tabs(['Upload de Arquivos', 'Seleção de Modelos'])
+    tabs = st.sidebar.tabs(['Upload de Arquivos', 'Seleção de Modelos', 'Processamento'])
     
     with tabs[0]:
         st.subheader("📁 Upload de Arquivos")
@@ -299,6 +400,31 @@ def sidebar():
             value=st.session_state.get(f'api_key_{provedor}', ''))
         st.session_state[f'api_key_{provedor}'] = api_key
     
+    with tabs[2]:
+        st.subheader("⚙️ Processamento")
+        st.caption("Configurações para documentos grandes")
+        
+        # Tamanho máximo para considerar um documento "grande"
+        max_tamanho_padrao = st.number_input(
+            "Limite de tamanho para processamento padrão (caracteres)",
+            min_value=5000,
+            max_value=100000,
+            value=50000,
+            step=5000,
+            help="Documentos maiores que este limite serão processados usando técnicas avançadas"
+        )
+        
+        # Opção para sempre usar processamento avançado
+        sempre_usar_processamento_avancado = st.checkbox(
+            "Sempre usar processamento avançado",
+            value=False,
+            help="Ativar para usar processamento avançado mesmo para documentos pequenos"
+        )
+        
+        # Guardar configurações na sessão
+        st.session_state['max_tamanho_padrao'] = max_tamanho_padrao
+        st.session_state['sempre_usar_processamento_avancado'] = sempre_usar_processamento_avancado
+    
     col1, col2 = st.sidebar.columns(2)
     
     with col1:
@@ -316,6 +442,12 @@ def sidebar():
         st.sidebar.markdown("---")
         st.sidebar.caption("DOCUMENTO ATUAL")
         st.sidebar.info(f"📄 {st.session_state['tipo_arquivo']} • {st.session_state['tamanho_documento']} caracteres")
+        
+        # Mostrar modo de processamento
+        if st.session_state.get('usando_documento_grande', False):
+            st.sidebar.success("🔄 Usando processamento avançado para documento grande")
+        else:
+            st.sidebar.info("🔄 Usando processamento padrão")
     
     # Informações do projeto (simplificado)
     st.sidebar.markdown("---")
