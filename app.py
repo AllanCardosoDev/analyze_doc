@@ -156,62 +156,64 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
             st.session_state['doc_memory_manager'] = DocumentMemoryManager()
         
         # Para documentos grandes, processar usando o gerenciador de memória
-        limite_tamanho = 50000  # Aumentamos o limite para 50K caracteres
+        # Reduzimos o limite para 30K caracteres para evitar problemas de tokens
+        limite_tamanho = 30000  
+        
+        # Processamos todos os documentos com o gerenciador de memória para ter acesso ao número de páginas
+        memory_manager = st.session_state['doc_memory_manager']
+        processamento = memory_manager.process_document(documento, tipo_arquivo)
         
         # Dependendo do tamanho do documento, usamos abordagens diferentes
         if len(documento) > limite_tamanho:
-            # Para documentos muito grandes (mais de 50K caracteres)
+            # Para documentos muito grandes (mais de 30K caracteres)
             st.session_state['usando_documento_grande'] = True
             
-            # Processar o documento com o gerenciador de memória
-            memory_manager = st.session_state['doc_memory_manager']
-            processamento = memory_manager.process_document(documento, tipo_arquivo)
-            
-            # Obter um preview do documento para o contexto inicial
-            documento_preview = memory_manager.get_document_preview(max_chars=8000)
+            # Obter um preview do documento para o contexto inicial (reduzido para 1500 caracteres)
+            documento_preview = memory_manager.get_document_preview(max_chars=1500)
             
             # Informar o usuário sobre o uso do método para documentos grandes
-            st.sidebar.info(f"📄 Documento grande ({len(documento)} caracteres) - Usando processamento avançado com {processamento['total_chunks']} chunks.")
+            st.sidebar.info(f"📄 Documento grande ({len(documento)} caracteres, ~{processamento['num_paginas']} páginas) - Usando processamento avançado.")
             
             # Modificar a mensagem do sistema para enfatizar que o modelo tem acesso a todo o conteúdo
+            # Mas com texto mais conciso para economizar tokens
             system_message = f"""
-            Você é um assistente chamado Analyse Doc especializado em analisar documentos.
+            Você é um assistente especializado em analisar documentos.
+            
+            Tipo de documento: {tipo_arquivo}
+            Tamanho: {len(documento)} caracteres
+            Páginas estimadas: {processamento['num_paginas']}
+            
+            Este é um documento grande processado com técnicas avançadas. 
+            Você tem acesso ao documento completo através de um sistema de recuperação
+            de informações que fornece as partes relevantes para cada pergunta.
+            
+            PREVIEW DO DOCUMENTO:
+            {documento_preview}
+            
+            Seja detalhado e preciso em suas respostas, sempre usando as informações disponíveis no documento.
+            """
+        else:
+            # Para documentos de tamanho moderado, também usamos o sistema de chunks
+            # mas com uma mensagem de sistema mais completa
+            st.session_state['usando_documento_grande'] = False
+            
+            system_message = f"""
+            Você é um assistente especializado em analisar documentos.
             
             SOBRE O DOCUMENTO:
             - Tipo: {tipo_arquivo}
             - Tamanho: {len(documento)} caracteres
-            - Dividido em: {processamento['total_chunks']} partes para processamento
+            - Páginas estimadas: {processamento['num_paginas']}
             
-            Este é um documento grande que foi processado usando técnicas avançadas. 
-            Você tem acesso ao documento completo através de um sistema de recuperação
-            de informações que fornecerá as partes relevantes do documento para cada pergunta.
+            O documento foi processado e está disponível para consulta.
             
-            Aqui está um preview do conteúdo para você entender o contexto do documento:
-            
-            ####
-            {documento_preview}
-            ####
-            
-            Utilize as informações fornecidas para basear as suas respostas.
-            Se a pergunta não puder ser respondida com as informações do documento, informe isso ao usuário.
-            Seja detalhado e preciso em suas análises, sempre fundamentando suas respostas no conteúdo do documento.
+            Utilize as informações do documento para responder às perguntas.
+            Se a pergunta não puder ser respondida com as informações disponíveis, informe isso.
+            Seja preciso e objetivo em suas análises.
             """
-        else:
-            # Para documentos de tamanho moderado, usamos o documento completo
-            st.session_state['usando_documento_grande'] = False
             
-            system_message = f"""
-            Você é um assistente chamado Analyse Doc especializado em analisar documentos.
-            Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
-            
-            ####
-            {documento}
-            ####
-            
-            Utilize as informações fornecidas para basear as suas respostas.
-            Se a pergunta não puder ser respondida com as informações do documento, informe isso ao usuário.
-            Seja detalhado e preciso em suas análises, sempre fundamentando suas respostas no conteúdo do documento.
-            """
+            # Ainda indicamos que está sendo usado o processamento avançado
+            st.sidebar.success(f"📄 Documento processado ({len(documento)} caracteres, ~{processamento['num_paginas']} páginas)")
         
         template = ChatPromptTemplate.from_messages([
             ('system', system_message),
@@ -228,46 +230,60 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         # Guarda na sessão
         st.session_state['chain'] = chain
         st.session_state['tipo_arquivo'] = tipo_arquivo
-        st.session_state['tamanho_documento'] = len(documento)
         
         # Avisa o usuário que o documento foi carregado com sucesso
-        st.sidebar.success(f"✅ Documento {tipo_arquivo} carregado com sucesso! ({len(documento)} caracteres)")
+        st.sidebar.success(f"✅ Documento {tipo_arquivo} carregado com sucesso!")
         
     except Exception as e:
         logger.error(f"Erro ao carregar modelo: {e}")
         st.error(f"❌ Erro ao processar documento: {e}")
 
 def processar_pergunta_documento_grande(input_usuario, chain):
-    """Processa perguntas para documentos grandes com recuperação de contexto."""
+    """
+    Processa perguntas para documentos com recuperação de contexto.
+    Otimizado para usar menos tokens.
+    """
     try:
+        # Verificar se a pergunta é sobre o número de páginas
+        import re
+        if re.search(r'quantas\s+p[áa]ginas|n[úu]mero\s+de\s+p[áa]ginas', input_usuario.lower()):
+            num_paginas = st.session_state.get('num_paginas', 0)
+            if num_paginas > 0:
+                yield f"O documento possui aproximadamente {num_paginas} páginas."
+                return
+        
         # Obter o gerenciador de memória de documentos
         memory_manager = st.session_state.get('doc_memory_manager')
         if not memory_manager:
-            return "Erro: Gerenciador de memória de documentos não inicializado."
+            yield "Erro: Gerenciador de memória de documentos não inicializado."
+            return
+        
+        # Obter o número de chunks configurado pelo usuário (padrão 2)
+        k_chunks = st.session_state.get('k_chunks', 2)
         
         # Recuperar chunks relevantes para a pergunta
-        chunks_relevantes = memory_manager.retrieve_relevant_chunks(input_usuario)
+        chunks_relevantes = memory_manager.retrieve_relevant_chunks(input_usuario, k=k_chunks)
+        
+        # Se recebermos um chunk especial com informação de páginas, usamos diretamente
+        if chunks_relevantes and hasattr(chunks_relevantes[0], 'metadata') and 'num_paginas' in chunks_relevantes[0].metadata:
+            yield chunks_relevantes[0].page_content
+            return
         
         # Combinar o conteúdo dos chunks relevantes
         contexto_relevante = "\n\n".join([chunk.page_content for chunk in chunks_relevantes])
         
-        # Criar um prompt específico para esta pergunta
+        # Criar um prompt específico para esta pergunta (otimizado)
         prompt_especifico = f"""
-        Com base nas seguintes seções do documento, responda à pergunta do usuário:
+        Responda à pergunta do usuário usando apenas estas informações do documento:
         
-        SEÇÕES RELEVANTES DO DOCUMENTO:
         {contexto_relevante}
         
-        PERGUNTA DO USUÁRIO:
-        {input_usuario}
-        
-        Responda de forma detalhada e precisa, citando as informações relevantes do documento.
-        Se a pergunta não puder ser respondida com as informações fornecidas, informe isso ao usuário.
+        Pergunta: {input_usuario}
         """
         
         # Usar o chain para gerar a resposta
         resposta = ""
-        for chunk in chain.stream({"input": prompt_especifico, "chat_history": st.session_state['memoria'].buffer_as_messages}):
+        for chunk in chain.stream({"input": prompt_especifico}):
             if hasattr(chunk, 'content'):
                 resposta += chunk.content
             else:
@@ -275,7 +291,7 @@ def processar_pergunta_documento_grande(input_usuario, chain):
             yield resposta
         
     except Exception as e:
-        logger.error(f"Erro ao processar pergunta para documento grande: {e}")
+        logger.error(f"Erro ao processar pergunta: {e}")
         yield f"Erro ao processar sua pergunta: {e}"
 
 def pagina_chat():
@@ -326,36 +342,14 @@ def pagina_chat():
                 with chat_container:
                     resposta_container = st.empty()
                     
-                    # Verificar se estamos usando documento grande
-                    if st.session_state.get('usando_documento_grande', False):
-                        # Processar usando a abordagem para documentos grandes
-                        for resposta_parcial in processar_pergunta_documento_grande(input_usuario, chain):
-                            resposta_container.markdown(
-                                f'<div class="chat-message-ai">{resposta_parcial}</div>',
-                                unsafe_allow_html=True
-                            )
-                        resposta_completa = resposta_parcial
-                    else:
-                        # Abordagem padrão para documentos menores
-                        resposta_parcial = []
-                        for chunk in chain.stream({
-                            "input": input_usuario,
-                            "chat_history": memoria.buffer_as_messages
-                        }):
-                            # Adicionar o chunk à resposta parcial
-                            if hasattr(chunk, 'content'):
-                                resposta_parcial.append(chunk.content)
-                            else:
-                                resposta_parcial.append(str(chunk))
-                            
-                            # Atualizar a UI com a resposta parcial
-                            resposta_container.markdown(
-                                f'<div class="chat-message-ai">{"".join(resposta_parcial)}</div>',
-                                unsafe_allow_html=True
-                            )
-                        
-                        # Obter a resposta completa
-                        resposta_completa = "".join(resposta_parcial)
+                    # Sempre usar a abordagem de recuperação de contexto para todas as perguntas
+                    # para evitar problemas de limite de tokens
+                    for resposta_parcial in processar_pergunta_documento_grande(input_usuario, chain):
+                        resposta_container.markdown(
+                            f'<div class="chat-message-ai">{resposta_parcial}</div>',
+                            unsafe_allow_html=True
+                        )
+                    resposta_completa = resposta_parcial
             
             # Adiciona à memória
             memoria.chat_memory.add_user_message(input_usuario)
@@ -404,26 +398,41 @@ def sidebar():
         st.subheader("⚙️ Processamento")
         st.caption("Configurações para documentos grandes")
         
-        # Tamanho máximo para considerar um documento "grande"
-        max_tamanho_padrao = st.number_input(
-            "Limite de tamanho para processamento padrão (caracteres)",
-            min_value=5000,
-            max_value=100000,
-            value=50000,
-            step=5000,
-            help="Documentos maiores que este limite serão processados usando técnicas avançadas"
-        )
-        
-        # Opção para sempre usar processamento avançado
-        sempre_usar_processamento_avancado = st.checkbox(
-            "Sempre usar processamento avançado",
-            value=False,
-            help="Ativar para usar processamento avançado mesmo para documentos pequenos"
-        )
-        
-        # Guardar configurações na sessão
-        st.session_state['max_tamanho_padrao'] = max_tamanho_padrao
-        st.session_state['sempre_usar_processamento_avancado'] = sempre_usar_processamento_avancado
+        # Exibir informações do documento atual se disponível
+        if 'doc_memory_manager' in st.session_state and 'documento_completo' in st.session_state:
+            memory_manager = st.session_state['doc_memory_manager']
+            info = memory_manager.get_document_info()
+            
+            st.markdown("**Informações do documento atual:**")
+            st.text(f"• Tipo: {info['tipo']}")
+            st.text(f"• Tamanho: {info['tamanho']} caracteres")
+            st.text(f"• Páginas estimadas: {info['num_paginas']}")
+            st.text(f"• Chunks processados: {info['num_chunks']}")
+            
+            # Opção para ajustar o tamanho dos chunks (para usuários avançados)
+            st.caption("Ajustes avançados")
+            chunk_size = st.slider(
+                "Tamanho dos chunks (caracteres)",
+                min_value=1000,
+                max_value=4000,
+                value=2000,
+                step=500,
+                help="Chunks menores usam menos tokens mas podem perder contexto"
+            )
+            
+            # Opção para ajustar o número de chunks retornados
+            k_chunks = st.slider(
+                "Número de chunks por consulta",
+                min_value=1,
+                max_value=4,
+                value=2,
+                step=1,
+                help="Mais chunks fornecem mais contexto mas usam mais tokens"
+            )
+            
+            # Guardar configurações na sessão
+            st.session_state['chunk_size'] = chunk_size
+            st.session_state['k_chunks'] = k_chunks
     
     col1, col2 = st.sidebar.columns(2)
     
@@ -441,7 +450,11 @@ def sidebar():
     if 'tipo_arquivo' in st.session_state and 'tamanho_documento' in st.session_state:
         st.sidebar.markdown("---")
         st.sidebar.caption("DOCUMENTO ATUAL")
-        st.sidebar.info(f"📄 {st.session_state['tipo_arquivo']} • {st.session_state['tamanho_documento']} caracteres")
+        num_paginas = st.session_state.get('num_paginas', 0)
+        if num_paginas > 0:
+            st.sidebar.info(f"📄 {st.session_state['tipo_arquivo']} • {st.session_state['tamanho_documento']} caracteres • ~{num_paginas} páginas")
+        else:
+            st.sidebar.info(f"📄 {st.session_state['tipo_arquivo']} • {st.session_state['tamanho_documento']} caracteres")
         
         # Mostrar modo de processamento
         if st.session_state.get('usando_documento_grande', False):
