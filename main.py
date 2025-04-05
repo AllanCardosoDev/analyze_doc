@@ -33,8 +33,9 @@ if "inicializado" not in st.session_state:
     st.session_state["analisar_estrutura"] = False
     
     # Configurações padrão para processamento de documentos grandes
-    st.session_state["max_tamanho_padrao"] = 50000
-    st.session_state["sempre_usar_processamento_avancado"] = False
+    st.session_state["max_tamanho_padrao"] = 30000  # Reduzido para evitar problemas de tokens
+    st.session_state["chunk_size"] = 2000  # Tamanho padrão dos chunks
+    st.session_state["k_chunks"] = 2  # Número de chunks por consulta
     
     # Inicializar o gerenciador de memória de documentos
     st.session_state["doc_memory_manager"] = DocumentMemoryManager()
