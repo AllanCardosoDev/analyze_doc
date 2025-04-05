@@ -9,3 +9,5 @@ pypdf
 unstructured
 fake_useragent
 docx2txt
+nltk
+fpdf
