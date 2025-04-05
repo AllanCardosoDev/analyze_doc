@@ -278,13 +278,13 @@ def sidebar():
         # Interface de acordo com o tipo de arquivo
         if tipo_arquivo == 'Site':
             arquivo = st.text_input('Digite a URL do site', placeholder="https://exemplo.com")
-        elif tipo_arquivo == 'Pdf':
+        elif tipo_arquivo == 'PDF':
             arquivo = st.file_uploader('Faça o upload do arquivo PDF', type=['pdf'])
         elif tipo_arquivo == 'Docx':
             arquivo = st.file_uploader('Faça o upload do arquivo Word', type=['docx'])
-        elif tipo_arquivo == 'Csv':
+        elif tipo_arquivo == 'CSV':
             arquivo = st.file_uploader('Faça o upload do arquivo CSV', type=['csv'])
-        elif tipo_arquivo == 'Txt':
+        elif tipo_arquivo == 'TXT':
             arquivo = st.file_uploader('Faça o upload do arquivo TXT', type=['txt'])
     
     with tabs[1]:
