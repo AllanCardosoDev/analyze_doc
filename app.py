@@ -74,7 +74,7 @@ st.markdown("""
 
 # Constantes
 TIPOS_ARQUIVOS_VALIDOS = [
-    'Site', 'PDF', 'Docx', 'CSV', 'TXT'
+    'Site', 'Pdf', 'Docx', 'Csv', 'Txt'
 ]
 
 CONFIG_MODELOS = {
