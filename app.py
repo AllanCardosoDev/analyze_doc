@@ -144,41 +144,48 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         if 'doc_memory_manager' not in st.session_state:
             st.session_state['doc_memory_manager'] = DocumentMemoryManager()
         
-        # Processamos todos os documentos com o gerenciador de memória
+        # Processamos com o gerenciador de memória
         memory_manager = st.session_state['doc_memory_manager']
         processamento = memory_manager.process_document(documento, tipo_arquivo)
         
-        # Obter um preview do documento para o contexto inicial (1000 caracteres apenas)
-        documento_preview = memory_manager.get_document_preview(max_chars=1000)
-        
-        # Informar o usuário sobre o uso do método para documentos grandes
+        # Para documentos grandes (mais de 25K caracteres)
         if len(documento) > 25000:
+            st.session_state['usando_documento_grande'] = True
+            documento_preview = memory_manager.get_document_preview(max_chars=1500)
             st.sidebar.info(f"📄 Documento grande ({len(documento)} caracteres, ~{processamento['num_paginas']} páginas)")
+            
+            # Mensagem do sistema simplificada
+            system_message = f"""Você é um assistente especializado em análise de documentos.
+            
+            Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
+            ####
+            {documento_preview}
+            ####
+            
+            Este é apenas um trecho. Você tem acesso ao documento completo através de um sistema 
+            de recuperação que fornecerá as informações relevantes para cada pergunta.
+            
+            Utilize as informações do documento para responder às perguntas do usuário.
+            Seja direto, preciso e útil nas suas respostas.
+            Você pode se referir a perguntas anteriores do usuário quando relevante.
+            """
         else:
+            # Para documentos menores
+            st.session_state['usando_documento_grande'] = False
             st.sidebar.success(f"📄 Documento processado ({len(documento)} caracteres, ~{processamento['num_paginas']} páginas)")
-        
-        # Mensagem do sistema atualizada para uma conversa mais natural
-        system_message = f"""
-        Você é um assistente inteligente e cordial, especializado em ajudar as pessoas a entenderem documentos.
-        
-        Você foi carregado com um documento do tipo {tipo_arquivo} que tem cerca de {processamento['num_paginas']} páginas.
-        
-        Aqui está um trecho inicial do documento para que você entenda o contexto:
-        ---
-        {documento_preview}
-        ---
-        
-        Mantenha a conversa natural e amigável. Se o usuário te cumprimentar ou fizer perguntas não relacionadas ao documento, 
-        responda normalmente. Quando perguntado sobre informações específicas do documento, forneça respostas precisas e detalhadas.
-        
-        Você tem acesso ao documento completo através de um sistema de recuperação que identifica as partes relevantes para cada pergunta.
-        
-        Aspectos importantes:
-        1. Mantenha um tom conversacional e amigável
-        2. Seja conciso, mas completo nas suas respostas
-        3. Se não tiver certeza sobre algo no documento, admita francamente
-        4. Forneça trechos relevantes do documento quando útil
-        """
+            
+            # Mesmo assim usando chunks para economizar tokens
+            system_message = f"""Você é um assistente especializado em análise de documentos.
+            
+            Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
+            ####
+            {documento}
+            ####
+            
+            Utilize as informações do documento para responder às perguntas do usuário.
+            Seja direto, preciso e útil nas suas respostas.
+            Você pode se referir a perguntas anteriores do usuário quando relevante.
+            """
         
         template = ChatPromptTemplate.from_messages([
             ('system', system_message),
@@ -204,33 +211,12 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         logger.error(f"Erro ao carregar modelo: {e}")
         st.error(f"❌ Erro ao processar documento: {e}")
 
-def processar_pergunta(input_usuario, chain):
+def processar_pergunta_com_documento(input_usuario, chain, memoria):
     """
-    Processa perguntas com uma abordagem conversacional, mas bem informada sobre o documento.
+    Processa perguntas usando chunks relevantes do documento.
+    Utiliza a memória de conversação para manter contexto.
     """
     try:
-        # Verificar se é uma consulta simples ou cumprimento
-        cumprimentos = ['olá', 'ola', 'oi', 'bom dia', 'boa tarde', 'boa noite', 'hey', 'hi', 'hello']
-        perguntas_gerais = ['como vai', 'tudo bem', 'como você está', 'quem é você', 'o que você faz']
-        
-        # Se for apenas um cumprimento simples, responder de forma amigável
-        if input_usuario.lower().strip() in cumprimentos:
-            yield "Olá! Estou aqui para ajudar com o documento que você carregou. Pode me perguntar qualquer coisa sobre ele!"
-            return
-            
-        # Para perguntas gerais sobre o assistente, também responder diretamente
-        if any(frase in input_usuario.lower() for frase in perguntas_gerais):
-            yield "Estou bem, obrigado por perguntar! Estou pronto para ajudar com qualquer pergunta sobre o documento que você carregou. O que gostaria de saber?"
-            return
-            
-        # Verificar se a pergunta é sobre o número de páginas
-        import re
-        if re.search(r'quantas\s+p[áa]ginas|n[úu]mero\s+de\s+p[áa]ginas', input_usuario.lower()):
-            num_paginas = st.session_state.get('num_paginas', 0)
-            if num_paginas > 0:
-                yield f"O documento possui aproximadamente {num_paginas} páginas."
-                return
-                
         # Obter o gerenciador de memória de documentos
         memory_manager = st.session_state.get('doc_memory_manager')
         if not memory_manager:
@@ -246,21 +232,21 @@ def processar_pergunta(input_usuario, chain):
         # Combinar o conteúdo dos chunks relevantes
         contexto_relevante = "\n\n".join([chunk.page_content for chunk in chunks_relevantes])
         
-        # Criar um prompt conversacional que inclui o contexto relevante
-        prompt_especifico = f"""
-        Para responder à pergunta do usuário, considere este trecho relevante do documento:
-        
+        # Criar um prompt que inclui os chunks relevantes
+        prompt_adicional = f"""
+        Para responder à pergunta atual, use estas informações relevantes do documento:
         {contexto_relevante}
-        
-        Pergunta do usuário: {input_usuario}
-        
-        Responda de maneira conversacional e natural, como se estivesse conversando com um amigo. 
-        Seja preciso e baseie-se nas informações do documento, mas mantenha um tom amigável.
         """
         
-        # Usar o chain para gerar a resposta
+        # Combinamos a pergunta original com o contexto adicional
+        pergunta_completa = f"{prompt_adicional}\n\nPergunta: {input_usuario}"
+        
+        # Usar o chain para gerar a resposta, passando explicitamente o histórico de chat
         resposta = ""
-        for chunk in chain.stream({"input": prompt_especifico}):
+        for chunk in chain.stream({
+            "input": pergunta_completa,
+            "chat_history": memoria.buffer_as_messages
+        }):
             if hasattr(chunk, 'content'):
                 resposta += chunk.content
             else:
@@ -268,7 +254,7 @@ def processar_pergunta(input_usuario, chain):
             yield resposta
     except Exception as e:
         logger.error(f"Erro ao processar pergunta: {e}")
-        yield f"Desculpe, tive um problema ao processar sua pergunta. Pode tentar reformular?"
+        yield f"Erro ao processar sua pergunta: {e}"
 
 def pagina_chat():
     """Interface principal do chat."""
@@ -314,8 +300,8 @@ def pagina_chat():
                 with chat_container:
                     resposta_container = st.empty()
                     
-                    # Usar nossa nova função de processamento conversacional
-                    for resposta_parcial in processar_pergunta(input_usuario, chain):
+                    # Usar o processamento baseado em documento - agora com memória
+                    for resposta_parcial in processar_pergunta_com_documento(input_usuario, chain, memoria):
                         resposta_container.markdown(
                             f'<div class="chat-message-ai">{resposta_parcial}</div>',
                             unsafe_allow_html=True
