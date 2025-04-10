@@ -25,12 +25,12 @@ logger = logging.getLogger(__name__)
 
 # Configurações da interface
 st.set_page_config(
-    page_title="Oráculo - Analise documentos com IA",
-    page_icon="🤖",
+    page_title="Analyse Doc - Analise documentos com IA",
+    page_icon="📑",
     layout="wide"
 )
 
-# Aplicar estilo padrão de chat, sem contraste excessivo
+# Aplicar estilo padrão
 st.markdown("""
 <style>
     .main-header {
@@ -40,7 +40,6 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1rem;
     }
-    /* Estilos para chat padrão, sem tanto contraste */
     .chat-message-ai {
         padding: 0.5rem 1rem;
         margin-bottom: 0.5rem;
@@ -55,7 +54,6 @@ st.markdown("""
         background-color: rgba(220, 220, 220, 0.2);
         border-left: 2px solid #808080;
     }
-    /* Botões com estilo mais suave */
     .stButton > button {
         background-color: #4F8BF9;
         color: white;
@@ -147,8 +145,8 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
             st.session_state['doc_memory_manager'] = DocumentMemoryManager()
         
         # Para documentos grandes, processar usando o gerenciador de memória
-        # Reduzimos o limite para 30K caracteres para evitar problemas de tokens
-        limite_tamanho = 30000
+        # Limite reduzido para 25K caracteres para economia de tokens
+        limite_tamanho = 25000
         
         # Processamos todos os documentos com o gerenciador de memória para ter acesso ao número de páginas
         memory_manager = st.session_state['doc_memory_manager']
@@ -156,47 +154,40 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         
         # Dependendo do tamanho do documento, usamos abordagens diferentes
         if len(documento) > limite_tamanho:
-            # Para documentos muito grandes (mais de 30K caracteres)
+            # Para documentos muito grandes
             st.session_state['usando_documento_grande'] = True
-            # Obter um preview do documento para o contexto inicial (reduzido para 1500 caracteres)
-            documento_preview = memory_manager.get_document_preview(max_chars=1500)
+            # Obter um preview do documento para o contexto inicial (1000 caracteres apenas)
+            documento_preview = memory_manager.get_document_preview(max_chars=1000)
             # Informar o usuário sobre o uso do método para documentos grandes
             st.sidebar.info(f"📄 Documento grande ({len(documento)} caracteres, ~{processamento['num_paginas']} páginas) - Usando processamento avançado.")
             
-            # Modificar a mensagem do sistema para enfatizar que o modelo tem acesso a todo o conteúdo
-            system_message = f"""Você é um assistente amigável chamado Oráculo.
-            Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
-            ####
+            # Mensagem do sistema mais concisa
+            system_message = f"""Você é um assistente especializado em analisar documentos.
+            Tipo: {tipo_arquivo} | Tamanho: {len(documento)} caracteres | ~{processamento['num_paginas']} páginas
+            
+            Preview do documento (você tem acesso ao documento completo via sistema de recuperação):
             {documento_preview}
-            ####
             
-            Este é um documento grande processado com técnicas avançadas.
-            Você tem acesso ao documento completo através de um sistema de recuperação
-            de informações que fornece as partes relevantes para cada pergunta.
-            
-            Utilize as informações fornecidas para basear as suas respostas.
-            Sempre que houver $ na sua saída, substitua por S.
-            Se a informação do documento for algo como "Just a moment...Enable JavaScript and cookies to continue"
-            sugira ao usuário carregar novamente o Oráculo!
+            Seja detalhado e preciso em suas respostas, sempre usando as informações do documento.
             """
         else:
-            # Para documentos de tamanho moderado, também usamos o sistema de chunks
-            # mas com uma mensagem de sistema mais completa
+            # Para documentos menores
             st.session_state['usando_documento_grande'] = False
-            system_message = f"""Você é um assistente amigável chamado Oráculo.
-            Você possui acesso às seguintes informações vindas de um documento {tipo_arquivo}:
-            ####
-            {documento}
-            ####
             
-            Utilize as informações fornecidas para basear as suas respostas.
-            Sempre que houver $ na sua saída, substitua por S.
-            Se a informação do documento for algo como "Just a moment...Enable JavaScript and cookies to continue"
-            sugira ao usuário carregar novamente o Oráculo!
-            """
-            
-            # Ainda indicamos que está sendo usado o processamento avançado
+            # Ainda usamos recuperação por chunks para economizar tokens
             st.sidebar.success(f"📄 Documento processado ({len(documento)} caracteres, ~{processamento['num_paginas']} páginas)")
+            
+            # Mensagem do sistema
+            system_message = f"""Você é um assistente especializado em analisar documentos.
+            
+            SOBRE O DOCUMENTO:
+            - Tipo: {tipo_arquivo}
+            - Tamanho: {len(documento)} caracteres
+            - Páginas estimadas: {processamento['num_paginas']}
+            
+            Utilize as informações do documento para responder às perguntas.
+            Seja preciso e objetivo em suas análises.
+            """
         
         template = ChatPromptTemplate.from_messages([
             ('system', system_message),
@@ -256,10 +247,11 @@ def processar_pergunta_documento_grande(input_usuario, chain):
         # Combinar o conteúdo dos chunks relevantes
         contexto_relevante = "\n\n".join([chunk.page_content for chunk in chunks_relevantes])
         
-        # Criar um prompt específico para esta pergunta (otimizado)
+        # Criar um prompt específico para esta pergunta (otimizado para tokens)
         prompt_especifico = f"""
-        Responda à pergunta do usuário usando apenas estas informações do documento:
+        Responda usando estas informações do documento:
         {contexto_relevante}
+        
         Pergunta: {input_usuario}
         """
         
@@ -276,19 +268,19 @@ def processar_pergunta_documento_grande(input_usuario, chain):
         yield f"Erro ao processar sua pergunta: {e}"
 
 def pagina_chat():
-    """Interface principal do chat - Simplificada, estilo chat padrão."""
-    st.markdown('<h1 class="main-header">🤖 Bem-vindo ao Oráculo</h1>', unsafe_allow_html=True)
+    """Interface principal do chat."""
+    st.markdown('<h1 class="main-header">📑 Analyse Doc</h1>', unsafe_allow_html=True)
     
     chain = st.session_state.get('chain')
     if chain is None:
         st.info("Carregue um documento na barra lateral para começar a conversar.")
-        with st.expander("ℹ️ Como usar o Oráculo"):
+        with st.expander("ℹ️ Como usar o Analyse Doc"):
             st.markdown("""
             1. **Selecione o tipo de documento** na barra lateral.
             2. **Carregue o documento** (arquivo ou URL).
             3. **Escolha o modelo de IA** que deseja usar.
             4. **Adicione sua API Key** do provedor escolhido.
-            5. **Inicialize o Oráculo** para começar a análise.
+            5. **Inicialize o Analyse Doc** para começar a análise.
             6. **Faça perguntas** sobre o documento carregado.
             """)
         st.stop()
@@ -296,10 +288,10 @@ def pagina_chat():
     # Recupera a memória da sessão
     memoria = st.session_state.get('memoria', ConversationBufferMemory())
     
-    # Cria container para o chat (estilo mais padrão)
+    # Cria container para o chat
     chat_container = st.container()
     with chat_container:
-        # Exibe o histórico de mensagens com estilo de chat padrão
+        # Exibe o histórico de mensagens
         for mensagem in memoria.buffer_as_messages:
             if mensagem.type == 'ai':
                 st.markdown(f'<div class="chat-message-ai">{mensagem.content}</div>', unsafe_allow_html=True)
@@ -307,7 +299,7 @@ def pagina_chat():
                 st.markdown(f'<div class="chat-message-human">{mensagem.content}</div>', unsafe_allow_html=True)
     
     # Campo de entrada do usuário
-    input_usuario = st.chat_input("Fale com o oráculo")
+    input_usuario = st.chat_input("Faça perguntas sobre o documento carregado")
     if input_usuario:
         # Exibe a mensagem do usuário
         with chat_container:
@@ -319,31 +311,14 @@ def pagina_chat():
                 with chat_container:
                     resposta_container = st.empty()
                     
-                    # Verifica se estamos usando documento grande ou não
-                    if st.session_state.get('usando_documento_grande', False):
-                        # Abordagem para documentos grandes
-                        for resposta_parcial in processar_pergunta_documento_grande(input_usuario, chain):
-                            resposta_container.markdown(
-                                f'<div class="chat-message-ai">{resposta_parcial}</div>',
-                                unsafe_allow_html=True
-                            )
-                        resposta_completa = resposta_parcial
-                    else:
-                        # Abordagem para documentos menores - usar o chain diretamente
-                        resposta_parcial = ""
-                        for chunk in chain.stream({
-                            'input': input_usuario,
-                            'chat_history': memoria.buffer_as_messages
-                        }):
-                            if hasattr(chunk, 'content'):
-                                resposta_parcial += chunk.content
-                            else:
-                                resposta_parcial += str(chunk)
-                            resposta_container.markdown(
-                                f'<div class="chat-message-ai">{resposta_parcial}</div>',
-                                unsafe_allow_html=True
-                            )
-                        resposta_completa = resposta_parcial
+                    # Sempre usar a abordagem de recuperação de contexto
+                    # Esta é a abordagem mais econômica em tokens
+                    for resposta_parcial in processar_pergunta_documento_grande(input_usuario, chain):
+                        resposta_container.markdown(
+                            f'<div class="chat-message-ai">{resposta_parcial}</div>',
+                            unsafe_allow_html=True
+                        )
+                    resposta_completa = resposta_parcial
             
             # Adiciona à memória
             memoria.chat_memory.add_user_message(input_usuario)
@@ -429,12 +404,12 @@ def sidebar():
     
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        if st.button('Inicializar Oráculo', use_container_width=True):
+        if st.button('Inicializar', use_container_width=True):
             with st.spinner("Carregando documento..."):
                 carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
     
     with col2:
-        if st.button('Apagar Histórico', use_container_width=True):
+        if st.button('Limpar Chat', use_container_width=True):
             st.session_state['memoria'] = ConversationBufferMemory()
             st.sidebar.success("✅ Histórico apagado")
     
@@ -454,10 +429,10 @@ def sidebar():
         else:
             st.sidebar.info("🔄 Usando processamento padrão")
     
-    # Informações do projeto (simplificado)
+    # Informações do projeto
     st.sidebar.markdown("---")
     st.sidebar.caption("SOBRE")
-    st.sidebar.info("Oráculo • Análise de documentos com IA")
+    st.sidebar.info("Analyse Doc • Análise de documentos com IA")
 
 def main():
     """Função principal."""
