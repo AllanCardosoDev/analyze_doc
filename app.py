@@ -144,50 +144,41 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         if 'doc_memory_manager' not in st.session_state:
             st.session_state['doc_memory_manager'] = DocumentMemoryManager()
         
-        # Para documentos grandes, processar usando o gerenciador de memória
-        # Limite reduzido para 25K caracteres para economia de tokens
-        limite_tamanho = 25000
-        
-        # Processamos todos os documentos com o gerenciador de memória para ter acesso ao número de páginas
+        # Processamos todos os documentos com o gerenciador de memória
         memory_manager = st.session_state['doc_memory_manager']
         processamento = memory_manager.process_document(documento, tipo_arquivo)
         
-        # Dependendo do tamanho do documento, usamos abordagens diferentes
-        if len(documento) > limite_tamanho:
-            # Para documentos muito grandes
-            st.session_state['usando_documento_grande'] = True
-            # Obter um preview do documento para o contexto inicial (1000 caracteres apenas)
-            documento_preview = memory_manager.get_document_preview(max_chars=1000)
-            # Informar o usuário sobre o uso do método para documentos grandes
-            st.sidebar.info(f"📄 Documento grande ({len(documento)} caracteres, ~{processamento['num_paginas']} páginas) - Usando processamento avançado.")
-            
-            # Mensagem do sistema mais concisa
-            system_message = f"""Você é um assistente especializado em analisar documentos.
-            Tipo: {tipo_arquivo} | Tamanho: {len(documento)} caracteres | ~{processamento['num_paginas']} páginas
-            
-            Preview do documento (você tem acesso ao documento completo via sistema de recuperação):
-            {documento_preview}
-            
-            Seja detalhado e preciso em suas respostas, sempre usando as informações do documento.
-            """
+        # Obter um preview do documento para o contexto inicial (1000 caracteres apenas)
+        documento_preview = memory_manager.get_document_preview(max_chars=1000)
+        
+        # Informar o usuário sobre o uso do método para documentos grandes
+        if len(documento) > 25000:
+            st.sidebar.info(f"📄 Documento grande ({len(documento)} caracteres, ~{processamento['num_paginas']} páginas)")
         else:
-            # Para documentos menores
-            st.session_state['usando_documento_grande'] = False
-            
-            # Ainda usamos recuperação por chunks para economizar tokens
             st.sidebar.success(f"📄 Documento processado ({len(documento)} caracteres, ~{processamento['num_paginas']} páginas)")
-            
-            # Mensagem do sistema
-            system_message = f"""Você é um assistente especializado em analisar documentos.
-            
-            SOBRE O DOCUMENTO:
-            - Tipo: {tipo_arquivo}
-            - Tamanho: {len(documento)} caracteres
-            - Páginas estimadas: {processamento['num_paginas']}
-            
-            Utilize as informações do documento para responder às perguntas.
-            Seja preciso e objetivo em suas análises.
-            """
+        
+        # Mensagem do sistema atualizada para uma conversa mais natural
+        system_message = f"""
+        Você é um assistente inteligente e cordial, especializado em ajudar as pessoas a entenderem documentos.
+        
+        Você foi carregado com um documento do tipo {tipo_arquivo} que tem cerca de {processamento['num_paginas']} páginas.
+        
+        Aqui está um trecho inicial do documento para que você entenda o contexto:
+        ---
+        {documento_preview}
+        ---
+        
+        Mantenha a conversa natural e amigável. Se o usuário te cumprimentar ou fizer perguntas não relacionadas ao documento, 
+        responda normalmente. Quando perguntado sobre informações específicas do documento, forneça respostas precisas e detalhadas.
+        
+        Você tem acesso ao documento completo através de um sistema de recuperação que identifica as partes relevantes para cada pergunta.
+        
+        Aspectos importantes:
+        1. Mantenha um tom conversacional e amigável
+        2. Seja conciso, mas completo nas suas respostas
+        3. Se não tiver certeza sobre algo no documento, admita francamente
+        4. Forneça trechos relevantes do documento quando útil
+        """
         
         template = ChatPromptTemplate.from_messages([
             ('system', system_message),
@@ -213,12 +204,25 @@ def carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo):
         logger.error(f"Erro ao carregar modelo: {e}")
         st.error(f"❌ Erro ao processar documento: {e}")
 
-def processar_pergunta_documento_grande(input_usuario, chain):
+def processar_pergunta(input_usuario, chain):
     """
-    Processa perguntas para documentos com recuperação de contexto.
-    Otimizado para usar menos tokens.
+    Processa perguntas com uma abordagem conversacional, mas bem informada sobre o documento.
     """
     try:
+        # Verificar se é uma consulta simples ou cumprimento
+        cumprimentos = ['olá', 'ola', 'oi', 'bom dia', 'boa tarde', 'boa noite', 'hey', 'hi', 'hello']
+        perguntas_gerais = ['como vai', 'tudo bem', 'como você está', 'quem é você', 'o que você faz']
+        
+        # Se for apenas um cumprimento simples, responder de forma amigável
+        if input_usuario.lower().strip() in cumprimentos:
+            yield "Olá! Estou aqui para ajudar com o documento que você carregou. Pode me perguntar qualquer coisa sobre ele!"
+            return
+            
+        # Para perguntas gerais sobre o assistente, também responder diretamente
+        if any(frase in input_usuario.lower() for frase in perguntas_gerais):
+            yield "Estou bem, obrigado por perguntar! Estou pronto para ajudar com qualquer pergunta sobre o documento que você carregou. O que gostaria de saber?"
+            return
+            
         # Verificar se a pergunta é sobre o número de páginas
         import re
         if re.search(r'quantas\s+p[áa]ginas|n[úu]mero\s+de\s+p[áa]ginas', input_usuario.lower()):
@@ -230,7 +234,7 @@ def processar_pergunta_documento_grande(input_usuario, chain):
         # Obter o gerenciador de memória de documentos
         memory_manager = st.session_state.get('doc_memory_manager')
         if not memory_manager:
-            yield "Erro: Gerenciador de memória de documentos não inicializado."
+            yield "Erro: Sistema não conseguiu acessar o documento. Por favor, tente recarregar."
             return
             
         # Obter o número de chunks configurado pelo usuário (padrão 2)
@@ -239,20 +243,19 @@ def processar_pergunta_documento_grande(input_usuario, chain):
         # Recuperar chunks relevantes para a pergunta
         chunks_relevantes = memory_manager.retrieve_relevant_chunks(input_usuario, k=k_chunks)
         
-        # Se recebermos um chunk especial com informação de páginas, usamos diretamente
-        if chunks_relevantes and hasattr(chunks_relevantes[0], 'metadata') and 'num_paginas' in chunks_relevantes[0].metadata:
-            yield chunks_relevantes[0].page_content
-            return
-            
         # Combinar o conteúdo dos chunks relevantes
         contexto_relevante = "\n\n".join([chunk.page_content for chunk in chunks_relevantes])
         
-        # Criar um prompt específico para esta pergunta (otimizado para tokens)
+        # Criar um prompt conversacional que inclui o contexto relevante
         prompt_especifico = f"""
-        Responda usando estas informações do documento:
+        Para responder à pergunta do usuário, considere este trecho relevante do documento:
+        
         {contexto_relevante}
         
-        Pergunta: {input_usuario}
+        Pergunta do usuário: {input_usuario}
+        
+        Responda de maneira conversacional e natural, como se estivesse conversando com um amigo. 
+        Seja preciso e baseie-se nas informações do documento, mas mantenha um tom amigável.
         """
         
         # Usar o chain para gerar a resposta
@@ -265,7 +268,7 @@ def processar_pergunta_documento_grande(input_usuario, chain):
             yield resposta
     except Exception as e:
         logger.error(f"Erro ao processar pergunta: {e}")
-        yield f"Erro ao processar sua pergunta: {e}"
+        yield f"Desculpe, tive um problema ao processar sua pergunta. Pode tentar reformular?"
 
 def pagina_chat():
     """Interface principal do chat."""
@@ -311,9 +314,8 @@ def pagina_chat():
                 with chat_container:
                     resposta_container = st.empty()
                     
-                    # Sempre usar a abordagem de recuperação de contexto
-                    # Esta é a abordagem mais econômica em tokens
-                    for resposta_parcial in processar_pergunta_documento_grande(input_usuario, chain):
+                    # Usar nossa nova função de processamento conversacional
+                    for resposta_parcial in processar_pergunta(input_usuario, chain):
                         resposta_container.markdown(
                             f'<div class="chat-message-ai">{resposta_parcial}</div>',
                             unsafe_allow_html=True
@@ -422,12 +424,6 @@ def sidebar():
             st.sidebar.info(f"📄 {st.session_state['tipo_arquivo']} • {st.session_state['tamanho_documento']} caracteres • ~{num_paginas} páginas")
         else:
             st.sidebar.info(f"📄 {st.session_state['tipo_arquivo']} • {st.session_state['tamanho_documento']} caracteres")
-        
-        # Mostrar modo de processamento
-        if st.session_state.get('usando_documento_grande', False):
-            st.sidebar.success("🔄 Usando processamento avançado para documento grande")
-        else:
-            st.sidebar.info("🔄 Usando processamento padrão")
     
     # Informações do projeto
     st.sidebar.markdown("---")
