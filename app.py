@@ -5,14 +5,14 @@ Sistema avançado de análise de documentos com IA
 import tempfile
 import os
 import logging
+from typing import Generator, Optional
 import streamlit as st
 from langchain.memory import ConversationBufferMemory
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
-from typing import Optional, Generator
+from langchain.schema import HumanMessage, AIMessage
 
-# Imports locais
 from loaders import (
     carrega_site,
     carrega_youtube,
@@ -24,14 +24,13 @@ from loaders import (
 from document_memory import DocumentMemoryManager
 from config import AppConfig, ModelConfig, FileTypes, CUSTOM_CSS
 from utils import (
+    setup_logging,
     validate_api_key,
     format_document_info,
     estimate_tokens,
     estimate_cost,
     safe_session_state_get,
-    safe_session_state_set,
-    clear_session_state_prefix,
-    setup_logging
+    safe_session_state_set
 )
 
 # Configurar logging
@@ -45,49 +44,48 @@ st.set_page_config(
     layout=AppConfig.LAYOUT
 )
 
-# Aplicar estilos customizados
+# Aplicar estilos personalizados
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
+# Inicializar configurações
+config = AppConfig()
+model_config = ModelConfig()
 
-def initialize_session_state():
-    """Inicializa o estado da sessão com valores padrão."""
+
+def inicializar_sessao():
+    """Inicializa as variáveis de sessão necessárias."""
     defaults = {
         "memoria": ConversationBufferMemory(),
-        "chain": None,
         "doc_memory_manager": None,
-        "documento_completo": None,
-        "tipo_arquivo": None,
-        "tamanho_documento": 0,
-        "num_paginas": 0,
-        "usando_documento_grande": False,
-        "doc_chunks": [],
-        "doc_hash": "",
-        "chunk_size": AppConfig.DEFAULT_CHUNK_SIZE,
-        "chunk_overlap": AppConfig.DEFAULT_CHUNK_OVERLAP,
-        "k_chunks": AppConfig.DEFAULT_K_CHUNKS,
+        "chain": None,
+        "documento_carregado": False,
         "total_queries": 0,
+        "k_chunks": config.DEFAULT_K_CHUNKS,
+        "chunk_size": config.DEFAULT_CHUNK_SIZE,
+        "chunk_overlap": config.DEFAULT_CHUNK_OVERLAP,
         "use_embeddings": False,
-        "messages_count": 0
+        "show_debug": False,
+        "tokens_used": 0,
+        "cost_accumulated": 0.0
     }
     
-    for key, default_value in defaults.items():
+    for key, value in defaults.items():
         if key not in st.session_state:
-            st.session_state[key] = default_value
+            st.session_state[key] = value
 
 
-def carrega_arquivos(tipo_arquivo: str, arquivo) -> tuple:
+def carrega_arquivos(tipo_arquivo: str, arquivo) -> tuple[str, str]:
     """
-    Função para carregar arquivos com tratamento de erros.
+    Função unificada para carregar arquivos com tratamento de erros.
     
     Args:
-        tipo_arquivo: Tipo do arquivo a ser carregado
+        tipo_arquivo: Tipo do arquivo
         arquivo: Arquivo ou URL
         
     Returns:
-        tuple: (conteúdo, mensagem)
+        tuple: (conteúdo, mensagem de status)
     """
     if not arquivo:
-        logger.warning("Nenhum arquivo ou URL fornecido.")
         return "", "❌ Nenhum arquivo ou URL fornecido."
     
     try:
@@ -97,199 +95,142 @@ def carrega_arquivos(tipo_arquivo: str, arquivo) -> tuple:
         elif tipo_arquivo == "Youtube":
             return carrega_youtube(arquivo)
         
-        # Para outros tipos de arquivo, criar arquivo temporário
+        # Para outros tipos, criar arquivo temporário
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{tipo_arquivo.lower()}") as temp:
             temp.write(arquivo.read())
             temp_path = temp.name
         
         try:
             if tipo_arquivo == "Pdf":
-                resultado = carrega_pdf(temp_path)
+                return carrega_pdf(temp_path)
             elif tipo_arquivo == "Docx":
-                resultado = carrega_docx(temp_path)
+                return carrega_docx(temp_path)
             elif tipo_arquivo == "Csv":
-                resultado = carrega_csv(temp_path)
+                return carrega_csv(temp_path)
             elif tipo_arquivo == "Txt":
-                resultado = carrega_txt(temp_path)
-            else:
-                resultado = ("", f"❌ Tipo de arquivo não suportado: {tipo_arquivo}")
-            
-            return resultado
-            
+                return carrega_txt(temp_path)
         finally:
-            # Sempre tentar remover o arquivo temporário
+            # Sempre remover arquivo temporário
             try:
                 os.unlink(temp_path)
-            except Exception as cleanup_err:
-                logger.error(f"Erro ao limpar arquivo temporário: {cleanup_err}")
-                
+            except Exception as e:
+                logger.error(f"Erro ao limpar arquivo temporário: {e}")
+    
     except Exception as e:
         logger.error(f"Erro ao carregar arquivo: {e}")
         return "", f"❌ Erro ao carregar arquivo: {str(e)}"
 
 
-def test_api_key(provider: str, api_key: str, model: str) -> tuple:
-    """
-    Testa se a API key é válida fazendo uma chamada simples.
-    
-    Args:
-        provider: Provedor (Groq ou OpenAI)
-        api_key: Chave API
-        model: Nome do modelo
-        
-    Returns:
-        tuple: (sucesso: bool, mensagem: str)
-    """
-    try:
-        if provider == "Groq":
-            chat = ChatGroq(model=model, api_key=api_key, temperature=0)
-        else:
-            chat = ChatOpenAI(model=model, api_key=api_key, temperature=0)
-        
-        # Fazer uma chamada simples de teste
-        response = chat.invoke("Hi")
-        
-        if response:
-            return True, "✅ API key válida!"
-        return False, "❌ Resposta inválida da API"
-        
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "api key" in error_msg or "unauthorized" in error_msg or "invalid" in error_msg:
-            return False, "❌ API key inválida ou sem permissão"
-        elif "rate limit" in error_msg:
-            return False, "⚠️ Limite de taxa excedido. Tente novamente mais tarde."
-        else:
-            return False, f"❌ Erro ao testar API: {str(e)[:100]}"
-
-
 def carrega_modelo(provedor: str, modelo: str, api_key: str, tipo_arquivo: str, arquivo):
-    """Carrega o modelo de IA e prepara o sistema para responder com base no documento."""
-    
-    # Validar API key
-    if not api_key:
-        api_key = safe_session_state_get(f'api_key_{provedor}', '')
-    
-    if not api_key:
-        st.error("⚠️ API Key não fornecida. Adicione uma chave válida para continuar.")
-        return
-    
-    # Validar formato da API key
-    is_valid, msg = validate_api_key(api_key, provedor)
-    if not is_valid:
-        st.error(f"⚠️ {msg}")
-        return
-    
-    # Mostrar progresso
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
+    """
+    Carrega o modelo de IA e prepara o sistema com contexto completo do documento.
+    """
     try:
-        # Passo 1: Testar API key
-        status_text.text("🔑 Validando API key...")
-        progress_bar.progress(10)
+        # Validar API key
+        if not api_key:
+            api_key = st.session_state.get(f'api_key_{provedor}', '')
         
-        # Comentar teste para acelerar (opcional)
-        # test_success, test_msg = test_api_key(provedor, api_key, modelo)
-        # if not test_success:
-        #     st.error(test_msg)
-        #     return
+        if not api_key:
+            st.error("⚠️ API Key não fornecida. Adicione uma chave válida para continuar.")
+            return
         
-        # Passo 2: Carregar documento
+        # Validar formato da API key
+        is_valid, message = validate_api_key(api_key, provedor)
+        if not is_valid:
+            st.error(f"⚠️ {message}")
+            return
+        
+        # Mostrar progresso
+        progress_bar = st.sidebar.progress(0)
+        status_text = st.sidebar.empty()
+        
+        # Carregar documento
         status_text.text("📄 Carregando documento...")
-        progress_bar.progress(30)
+        progress_bar.progress(20)
         
-        documento, load_msg = carrega_arquivos(tipo_arquivo, arquivo)
+        documento, status_msg = carrega_arquivos(tipo_arquivo, arquivo)
         
         if not documento or documento.startswith("❌"):
-            st.error(load_msg if load_msg else "Documento não pôde ser carregado")
+            st.error(status_msg if status_msg else "Documento não pôde ser carregado")
             progress_bar.empty()
             status_text.empty()
             return
         
-        # Mostrar mensagem de carregamento
-        if load_msg.startswith("✅"):
-            st.success(load_msg)
+        # Armazenar documento completo
+        st.session_state['documento_completo'] = documento
+        st.session_state['tamanho_documento'] = len(documento)
+        st.session_state['tipo_arquivo'] = tipo_arquivo
         
-        # Passo 3: Processar documento
-        status_text.text("⚙️ Processando documento...")
-        progress_bar.progress(50)
+        # Inicializar gerenciador de memória
+        status_text.text("🔧 Processando documento...")
+        progress_bar.progress(40)
         
-        # Armazenar o documento completo na sessão
-        safe_session_state_set('documento_completo', documento)
-        safe_session_state_set('tamanho_documento', len(documento))
-        safe_session_state_set('tipo_arquivo', tipo_arquivo)
+        use_embeddings = st.session_state.get('use_embeddings', False)
+        doc_manager = DocumentMemoryManager(use_embeddings=use_embeddings)
+        st.session_state['doc_memory_manager'] = doc_manager
         
-        # Inicializar o gerenciador de memória de documentos
-        use_embeddings = safe_session_state_get('use_embeddings', False)
+        # Processar documento
+        chunk_size = st.session_state.get('chunk_size', config.DEFAULT_CHUNK_SIZE)
+        chunk_overlap = st.session_state.get('chunk_overlap', config.DEFAULT_CHUNK_OVERLAP)
         
-        if 'doc_memory_manager' not in st.session_state or st.session_state['doc_memory_manager'] is None:
-            st.session_state['doc_memory_manager'] = DocumentMemoryManager(use_embeddings=use_embeddings)
-        
-        memory_manager = st.session_state['doc_memory_manager']
-        
-        # Obter configurações de chunking
-        chunk_size = safe_session_state_get('chunk_size', AppConfig.DEFAULT_CHUNK_SIZE)
-        chunk_overlap = safe_session_state_get('chunk_overlap', AppConfig.DEFAULT_CHUNK_OVERLAP)
-        
-        # Processar com o gerenciador de memória
-        processamento = memory_manager.process_document(
+        processamento = doc_manager.process_document(
             documento, 
             tipo_arquivo,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap
         )
         
-        # Passo 4: Criar prompt e chain
-        status_text.text("🤖 Configurando modelo de IA...")
-        progress_bar.progress(70)
+        progress_bar.progress(60)
         
-        # Para documentos grandes (mais de threshold caracteres)
-        if len(documento) > AppConfig.SMALL_DOCUMENT_THRESHOLD:
-            safe_session_state_set('usando_documento_grande', True)
-            documento_preview = memory_manager.get_document_preview(max_chars=1500)
+        # Preparar contexto do sistema baseado no tamanho do documento
+        if len(documento) > config.SMALL_DOCUMENT_THRESHOLD:
+            st.session_state['usando_documento_grande'] = True
+            # Para documentos grandes, usar estratégia de recuperação
+            documento_preview = doc_manager.get_document_preview(max_chars=2000)
             
             system_message = f"""Você é um assistente especializado em análise de documentos.
-            
-Você possui acesso a informações de um documento do tipo {tipo_arquivo}.
 
-Características do documento:
+Você tem acesso a um documento {tipo_arquivo} com as seguintes informações:
+- Total de páginas: {processamento['num_paginas']}
 - Tamanho: {len(documento)} caracteres
-- Páginas: aproximadamente {processamento['num_paginas']} páginas
 - Processado em {processamento['total_chunks']} chunks
 
-Preview do documento:
-####
+PREVIEW DO DOCUMENTO:
 {documento_preview}
-####
 
-Este é apenas um trecho inicial. Você tem acesso ao documento completo através de um sistema 
-de recuperação que fornecerá as informações mais relevantes para cada pergunta do usuário.
+IMPORTANTE: Este é apenas um preview. Para cada pergunta do usuário, você receberá os trechos mais relevantes do documento completo.
 
-Instruções:
-1. Utilize as informações do documento para responder às perguntas do usuário
-2. Seja direto, preciso e útil nas suas respostas
-3. Se não encontrar informação específica no contexto fornecido, indique isso claramente
-4. Você pode fazer referência a perguntas anteriores quando relevante
-5. Cite trechos específicos do documento quando apropriado
-"""
+INSTRUÇÕES:
+1. Use SEMPRE as informações dos trechos fornecidos para responder
+2. Se a informação não estiver nos trechos fornecidos, diga "Não encontrei essa informação específica nos trechos analisados"
+3. Cite números de página quando disponíveis
+4. Seja preciso e detalhado nas respostas
+5. Se o usuário perguntar sobre capítulos, seções específicas, ou partes do documento, analise cuidadosamente os trechos fornecidos
+6. Mantenha o contexto das perguntas anteriores quando relevante"""
         else:
-            safe_session_state_set('usando_documento_grande', False)
-            
+            st.session_state['usando_documento_grande'] = False
+            # Para documentos menores, incluir documento completo
             system_message = f"""Você é um assistente especializado em análise de documentos.
 
-Você possui acesso completo a um documento do tipo {tipo_arquivo}:
+Você tem acesso completo ao seguinte documento {tipo_arquivo}:
 
-####
+====== DOCUMENTO COMPLETO ======
 {documento}
-####
+====== FIM DO DOCUMENTO ======
 
-Instruções:
-1. Utilize as informações do documento para responder às perguntas do usuário
-2. Seja direto, preciso e útil nas suas respostas
-3. Cite trechos específicos do documento quando apropriado
-4. Você pode fazer referência a perguntas anteriores quando relevante
-"""
+Total de páginas: {processamento['num_paginas']}
+Tamanho: {len(documento)} caracteres
+
+INSTRUÇÕES:
+1. Use as informações do documento para responder às perguntas
+2. Seja preciso e detalhado
+3. Cite números de página quando disponíveis
+4. Se não encontrar a informação, seja honesto sobre isso
+5. Mantenha o contexto das perguntas anteriores quando relevante"""
+        
+        # Criar template do prompt
+        status_text.text("🤖 Configurando modelo de IA...")
+        progress_bar.progress(80)
         
         template = ChatPromptTemplate.from_messages([
             ('system', system_message),
@@ -297,12 +238,8 @@ Instruções:
             ('user', '{input}')
         ])
         
-        # Passo 5: Inicializar modelo
-        status_text.text("🚀 Inicializando modelo...")
-        progress_bar.progress(90)
-        
-        config_modelo = ModelConfig.PROVIDERS[provedor]
-        temperatura = config_modelo.get('temperatura_padrao', 0.7)
+        # Configurar modelo
+        temperatura = model_config.PROVIDERS[provedor].get('temperatura_padrao', 0.7)
         
         if provedor == 'Groq':
             chat = ChatGroq(
@@ -310,7 +247,7 @@ Instruções:
                 api_key=api_key,
                 temperature=temperatura
             )
-        else:
+        else:  # OpenAI
             chat = ChatOpenAI(
                 model=modelo,
                 api_key=api_key,
@@ -319,39 +256,36 @@ Instruções:
         
         chain = template | chat
         
-        # Guardar na sessão
-        safe_session_state_set('chain', chain)
-        safe_session_state_set('current_provider', provedor)
-        safe_session_state_set('current_model', modelo)
+        # Salvar na sessão
+        st.session_state['chain'] = chain
+        st.session_state['documento_carregado'] = True
+        st.session_state['provedor_atual'] = provedor
+        st.session_state['modelo_atual'] = modelo
         
         # Finalizar
         progress_bar.progress(100)
-        status_text.empty()
-        progress_bar.empty()
+        status_text.text("✅ Pronto!")
         
         # Mostrar informações do documento
-        info = memory_manager.get_document_info()
         st.sidebar.success(f"✅ Documento {tipo_arquivo} carregado com sucesso!")
         
-        # Estatísticas
-        st.sidebar.markdown(format_document_info(info), unsafe_allow_html=True)
+        info_html = format_document_info({
+            'tipo': tipo_arquivo,
+            'tamanho': len(documento),
+            'num_paginas': processamento['num_paginas'],
+            'num_chunks': processamento['total_chunks']
+        })
+        st.sidebar.markdown(info_html, unsafe_allow_html=True)
         
-        # Estimar custo
-        if processamento.get('estimated_tokens'):
-            cost_info = estimate_cost(
-                processamento['estimated_tokens'],
-                provedor,
-                modelo
-            )
-            st.sidebar.info(
-                f"💰 Custo estimado por consulta: ${cost_info['total_estimated']:.4f}"
-            )
+        # Limpar progress
+        import time
+        time.sleep(1)
+        progress_bar.empty()
+        status_text.empty()
         
     except Exception as e:
         logger.error(f"Erro ao carregar modelo: {e}", exc_info=True)
         st.error(f"❌ Erro ao processar documento: {str(e)}")
-        progress_bar.empty()
-        status_text.empty()
 
 
 def processar_pergunta_com_documento(
@@ -360,50 +294,89 @@ def processar_pergunta_com_documento(
     memoria: ConversationBufferMemory
 ) -> Generator[str, None, None]:
     """
-    Processa perguntas usando chunks relevantes do documento.
-    Utiliza a memória de conversação para manter contexto.
+    Processa perguntas usando chunks relevantes do documento de forma otimizada.
     """
     try:
-        # Obter o gerenciador de memória de documentos
-        memory_manager = safe_session_state_get('doc_memory_manager')
-        
+        memory_manager = st.session_state.get('doc_memory_manager')
         if not memory_manager:
             yield "❌ Erro: Sistema não conseguiu acessar o documento. Por favor, tente recarregar."
             return
         
-        # Obter o número de chunks configurado pelo usuário
-        k_chunks = safe_session_state_get('k_chunks', AppConfig.DEFAULT_K_CHUNKS)
+        # Obter configurações
+        k_chunks = st.session_state.get('k_chunks', config.DEFAULT_K_CHUNKS)
+        usando_doc_grande = st.session_state.get('usando_documento_grande', False)
         
-        # Recuperar chunks relevantes para a pergunta
-        chunks_relevantes = memory_manager.retrieve_relevant_chunks(input_usuario, k=k_chunks)
-        
-        # Combinar o conteúdo dos chunks relevantes
-        contexto_relevante = "\n\n".join([chunk.page_content for chunk in chunks_relevantes])
-        
-        # Criar um prompt que inclui os chunks relevantes
-        prompt_adicional = f"""
-Para responder à pergunta atual, use estas informações relevantes do documento:
+        # Para documentos pequenos, não precisamos recuperar chunks
+        if not usando_doc_grande:
+            # Usar documento completo já no contexto do sistema
+            pergunta_completa = input_usuario
+        else:
+            # Para documentos grandes, recuperar chunks relevantes
+            chunks_relevantes = memory_manager.retrieve_relevant_chunks(
+                input_usuario, 
+                k=k_chunks
+            )
+            
+            if not chunks_relevantes:
+                yield "⚠️ Não consegui encontrar informações relevantes no documento para responder sua pergunta."
+                return
+            
+            # Combinar chunks com metadados
+            contexto_chunks = []
+            for i, chunk in enumerate(chunks_relevantes):
+                chunk_info = f"[Trecho {i+1}"
+                if 'chunk_id' in chunk.metadata:
+                    chunk_info += f" - ID: {chunk.metadata['chunk_id']}"
+                chunk_info += "]\n" + chunk.page_content
+                contexto_chunks.append(chunk_info)
+            
+            contexto_relevante = "\n\n---\n\n".join(contexto_chunks)
+            
+            # Criar prompt com contexto adicional
+            prompt_adicional = f"""TRECHOS RELEVANTES DO DOCUMENTO PARA ESTA PERGUNTA:
 
 {contexto_relevante}
 
-Pergunta: {input_usuario}
-"""
+
+Use APENAS as informações acima para responder à pergunta a seguir. Se a resposta não estiver nesses trechos, diga claramente que não encontrou a informação específica."""
+            
+            pergunta_completa = f"{prompt_adicional}\n\nPERGUNTA DO USUÁRIO: {input_usuario}"
         
-        # Usar o chain para gerar a resposta
-        resposta = ""
+        # Debug info
+        if st.session_state.get('show_debug', False):
+            with st.expander("🔍 Debug - Contexto Enviado"):
+                st.text(f"Tamanho do contexto: {len(pergunta_completa)} caracteres")
+                st.text(f"Tokens estimados: ~{estimate_tokens(pergunta_completa)}")
+                if usando_doc_grande:
+                    st.text(f"Chunks recuperados: {len(chunks_relevantes)}")
+                st.code(pergunta_completa[:1000] + "..." if len(pergunta_completa) > 1000 else pergunta_completa)
+        
+        # Gerar resposta com streaming
+        resposta_completa = ""
         for chunk in chain.stream({
-            "input": prompt_adicional,
+            "input": pergunta_completa,
             "chat_history": memoria.buffer_as_messages
         }):
             if hasattr(chunk, 'content'):
-                resposta += chunk.content
+                resposta_completa += chunk.content
             else:
-                resposta += str(chunk)
-            yield resposta
+                resposta_completa += str(chunk)
+            yield resposta_completa
         
-        # Incrementar contador de consultas
-        total_queries = safe_session_state_get('total_queries', 0)
-        safe_session_state_set('total_queries', total_queries + 1)
+        # Atualizar estatísticas
+        st.session_state['total_queries'] = st.session_state.get('total_queries', 0) + 1
+        
+        # Estimar tokens e custo
+        input_tokens = estimate_tokens(pergunta_completa)
+        output_tokens = estimate_tokens(resposta_completa)
+        total_tokens = input_tokens + output_tokens
+        
+        st.session_state['tokens_used'] = st.session_state.get('tokens_used', 0) + total_tokens
+        
+        provedor = st.session_state.get('provedor_atual', 'Groq')
+        modelo = st.session_state.get('modelo_atual', '')
+        cost = estimate_cost(total_tokens, provedor, modelo)
+        st.session_state['cost_accumulated'] = st.session_state.get('cost_accumulated', 0.0) + cost['total_estimated']
         
     except Exception as e:
         logger.error(f"Erro ao processar pergunta: {e}", exc_info=True)
@@ -414,71 +387,63 @@ def pagina_chat():
     """Interface principal do chat."""
     st.markdown('<h1 class="main-header">📑 Analyse Doc</h1>', unsafe_allow_html=True)
     
-    chain = safe_session_state_get('chain')
+    chain = st.session_state.get('chain')
     
-    if chain is None:
-        st.info("👈 Carregue um documento na barra lateral para começar a conversar.")
-        
-        with st.expander("ℹ️ Como usar o Analyse Doc"):
+    if not chain or not st.session_state.get('documento_carregado', False):
+        # Página de boas-vindas
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
             st.markdown("""
-            ### Guia Rápido de Uso
+            <div style='text-align: center; padding: 2rem;'>
+                <h2>👋 Bem-vindo ao Analyse Doc!</h2>
+                <p>Analise documentos com inteligência artificial de forma simples e poderosa.</p>
+            </div>
+            """, unsafe_allow_html=True)
             
-            **1. Selecione o tipo de documento** na barra lateral
-            - Site, YouTube, PDF, Word, CSV ou TXT
+            with st.expander("📖 Como usar", expanded=True):
+                st.markdown("""
+                ### Passo a passo:
+                
+                1. **Selecione o tipo de documento** na barra lateral
+                   - Suporta: PDF, Word, CSV, TXT, Sites e YouTube
+                
+                2. **Carregue seu documento**
+                   - Faça upload do arquivo ou cole a URL
+                
+                3. **Escolha o modelo de IA**
+                   - Groq (rápido e gratuito)
+                   - OpenAI (mais avançado)
+                
+                4. **Configure sua API Key**
+                   - Obtenha em: [Groq](https://console.groq.com) ou [OpenAI](https://platform.openai.com)
+                
+                5. **Clique em "Inicializar"**
+                   - Aguarde o processamento
+                
+                6. **Comece a fazer perguntas!**
+                   - Pergunte qualquer coisa sobre o documento
+                """)
             
-            **2. Carregue o documento**
-            - Para sites e YouTube: cole a URL
-            - Para arquivos: faça o upload
-            
-            **3. Escolha o modelo de IA**
-            - Groq: modelos rápidos e gratuitos
-            - OpenAI: modelos mais avançados (GPT-4, etc)
-            
-            **4. Adicione sua API Key**
-            - Groq: obtenha em https://console.groq.com
-            - OpenAI: obtenha em https://platform.openai.com
-            
-            **5. Clique em "Inicializar"**
-            - O sistema processará seu documento
-            
-            **6. Faça perguntas sobre o documento**
-            - Digite suas perguntas no campo abaixo
-            - O sistema buscará informações relevantes para responder
-            
-            ### Dicas
-            - Para documentos grandes, o sistema usa chunks inteligentes
-            - Você pode ajustar o tamanho dos chunks nas configurações
-            - O histórico do chat é mantido durante a sessão
-            - Use "Limpar Chat" para iniciar uma nova conversa
-            """)
-        
-        # Mostrar estatísticas de uso se disponível
-        if safe_session_state_get('total_queries', 0) > 0:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("📊 Consultas", safe_session_state_get('total_queries', 0))
-            with col2:
-                st.metric("💬 Mensagens", safe_session_state_get('messages_count', 0))
-            with col3:
-                if safe_session_state_get('tipo_arquivo'):
-                    st.metric("📄 Tipo", safe_session_state_get('tipo_arquivo'))
+            with st.expander("✨ Recursos"):
+                st.markdown("""
+                - 🎯 **Análise Precisa**: Respostas baseadas no conteúdo real do documento
+                - 📊 **Múltiplos Formatos**: Suporte para diversos tipos de arquivo
+                - 💬 **Conversação Natural**: Mantenha contexto entre perguntas
+                - 🔍 **Busca Inteligente**: Sistema avançado de recuperação de informações
+                - 📈 **Estatísticas**: Acompanhe uso de tokens e custos
+                """)
         
         st.stop()
     
-    # Recupera a memória da sessão
-    memoria = safe_session_state_get('memoria', ConversationBufferMemory())
+    # Chat ativo
+    memoria = st.session_state.get('memoria', ConversationBufferMemory())
     
-    # Container para o chat
+    # Container para mensagens
     chat_container = st.container()
     
     with chat_container:
-        # Exibir o histórico de mensagens
-        messages = memoria.buffer_as_messages
-        
-        if len(messages) == 0:
-            st.info("💡 Faça sua primeira pergunta sobre o documento!")
-        
-        for mensagem in messages:
+        # Exibir histórico
+        for mensagem in memoria.buffer_as_messages:
             if mensagem.type == 'ai':
                 st.markdown(
                     f'<div class="chat-message-ai">🤖 {mensagem.content}</div>', 
@@ -490,15 +455,11 @@ def pagina_chat():
                     unsafe_allow_html=True
                 )
     
-    # Campo de entrada do usuário
+    # Input do usuário
     input_usuario = st.chat_input("Faça perguntas sobre o documento carregado...")
     
     if input_usuario:
-        # Incrementar contador de mensagens
-        messages_count = safe_session_state_get('messages_count', 0)
-        safe_session_state_set('messages_count', messages_count + 1)
-        
-        # Exibir a mensagem do usuário
+        # Exibir pergunta do usuário
         with chat_container:
             st.markdown(
                 f'<div class="chat-message-human">👤 {input_usuario}</div>', 
@@ -506,16 +467,13 @@ def pagina_chat():
             )
         
         try:
-            with st.spinner("🔍 Analisando..."):
-                # Configuração para streaming de resposta
+            with st.spinner("🤔 Analisando..."):
                 with chat_container:
                     resposta_container = st.empty()
                     
-                    # Processar pergunta com documento
+                    # Processar com streaming
                     for resposta_parcial in processar_pergunta_com_documento(
-                        input_usuario, 
-                        chain, 
-                        memoria
+                        input_usuario, chain, memoria
                     ):
                         resposta_container.markdown(
                             f'<div class="chat-message-ai">🤖 {resposta_parcial}</div>',
@@ -527,38 +485,36 @@ def pagina_chat():
             # Adicionar à memória
             memoria.chat_memory.add_user_message(input_usuario)
             memoria.chat_memory.add_ai_message(resposta_completa)
-            safe_session_state_set('memoria', memoria)
+            st.session_state['memoria'] = memoria
             
         except Exception as e:
-            logger.error(f"Erro ao processar resposta: {e}", exc_info=True)
             with chat_container:
                 st.error(f"❌ Erro ao processar resposta: {str(e)}")
+            logger.error(f"Erro no chat: {e}", exc_info=True)
 
 
 def sidebar():
-    """Cria a barra lateral para upload de arquivos e seleção de modelos."""
+    """Cria a barra lateral completa."""
     st.sidebar.header("🛠️ Configurações")
     
-    tabs = st.sidebar.tabs(['📁 Upload', '🤖 Modelo', '⚙️ Avançado'])
+    tabs = st.sidebar.tabs(['📁 Upload', '🤖 Modelo', '⚙️ Avançado', '📊 Stats'])
     
-    # TAB 1: Upload de Arquivos
+    # === TAB: UPLOAD ===
     with tabs[0]:
-        st.subheader("Carregar Documento")
+        st.subheader("📁 Upload de Documentos")
         
         tipo_arquivo = st.selectbox(
-            'Tipo de documento',
+            'Tipo de arquivo',
             FileTypes.SUPPORTED_TYPES,
             help="Selecione o tipo de documento que deseja analisar"
         )
         
-        # Interface de acordo com o tipo de arquivo
-        arquivo = None
-        
+        # Interface baseada no tipo
         if tipo_arquivo == 'Site':
             arquivo = st.text_input(
                 'URL do site',
                 placeholder="https://exemplo.com",
-                help="Cole a URL completa do site"
+                help="Cole a URL completa do site que deseja analisar"
             )
         elif tipo_arquivo == 'Youtube':
             arquivo = st.text_input(
@@ -568,193 +524,193 @@ def sidebar():
             )
         elif tipo_arquivo == 'Pdf':
             arquivo = st.file_uploader(
-                'Upload PDF',
+                'Upload do PDF',
                 type=['pdf'],
-                help=f"Tamanho máximo: {AppConfig.MAX_FILE_SIZE_MB} MB"
+                help=f"Tamanho máximo: {config.MAX_FILE_SIZE_MB} MB"
             )
         elif tipo_arquivo == 'Docx':
             arquivo = st.file_uploader(
-                'Upload Word',
+                'Upload do Word',
                 type=['docx'],
-                help=f"Tamanho máximo: {AppConfig.MAX_FILE_SIZE_MB} MB"
+                help=f"Tamanho máximo: {config.MAX_FILE_SIZE_MB} MB"
             )
         elif tipo_arquivo == 'Csv':
             arquivo = st.file_uploader(
-                'Upload CSV',
+                'Upload do CSV',
                 type=['csv'],
-                help=f"Tamanho máximo: {AppConfig.MAX_FILE_SIZE_MB} MB"
+                help=f"Tamanho máximo: {config.MAX_FILE_SIZE_MB} MB"
             )
         elif tipo_arquivo == 'Txt':
             arquivo = st.file_uploader(
-                'Upload TXT',
+                'Upload do TXT',
                 type=['txt'],
-                help=f"Tamanho máximo: {AppConfig.MAX_FILE_SIZE_MB} MB"
+                help=f"Tamanho máximo: {config.MAX_FILE_SIZE_MB} MB"
             )
     
-    # TAB 2: Seleção de Modelos
+    # === TAB: MODELO ===
     with tabs[1]:
-        st.subheader("Configurar IA")
+        st.subheader("🤖 Modelo de IA")
         
         provedor = st.selectbox(
             'Provedor',
-            ModelConfig.PROVIDERS.keys(),
+            list(model_config.PROVIDERS.keys()),
             help="Escolha o provedor de IA"
         )
         
         modelo = st.selectbox(
             'Modelo',
-            ModelConfig.PROVIDERS[provedor]['modelos'],
-            help="Escolha o modelo específico"
+            model_config.PROVIDERS[provedor]['modelos'],
+            help="Selecione o modelo específico"
         )
         
-        # Campo de API key com persistência
-        api_key_default = safe_session_state_get(f'api_key_{provedor}', '')
+        # Campo de API Key
         api_key = st.text_input(
-            f'API Key ({provedor})',
+            f'API Key - {provedor}',
             type="password",
-            value=api_key_default,
-            help=f"Sua chave API do {provedor}"
+            value=st.session_state.get(f'api_key_{provedor}', ''),
+            help=f"Sua chave de API do {provedor}"
         )
+        st.session_state[f'api_key_{provedor}'] = api_key
         
-        if api_key:
-            safe_session_state_set(f'api_key_{provedor}', api_key)
-            
-            # Validar formato
-            is_valid, msg = validate_api_key(api_key, provedor)
-            if is_valid:
-                st.success("✅ Formato válido")
-            else:
-                st.warning(f"⚠️ {msg}")
+        # Links úteis
+        st.caption("🔑 Obtenha sua API Key:")
+        if provedor == 'Groq':
+            st.markdown("[console.groq.com](https://console.groq.com)")
+        else:
+            st.markdown("[platform.openai.com](https://platform.openai.com)")
     
-    # TAB 3: Configurações Avançadas
+    # === TAB: AVANÇADO ===
     with tabs[2]:
-        st.subheader("Processamento")
+        st.subheader("⚙️ Configurações Avançadas")
         
-        # Mostrar informações do documento atual se disponível
-        if 'doc_memory_manager' in st.session_state and st.session_state['doc_memory_manager'] is not None:
+        # Mostrar info do documento se carregado
+        if 'doc_memory_manager' in st.session_state and 'documento_completo' in st.session_state:
             memory_manager = st.session_state['doc_memory_manager']
+            info = memory_manager.get_document_info()
             
-            try:
-                info = memory_manager.get_document_info()
-                
-                st.markdown("**📊 Documento Atual**")
-                st.text(f"Tipo: {info.get('tipo', 'N/A')}")
-                st.text(f"Tamanho: {info.get('tamanho', 0):,} caracteres")
-                st.text(f"Páginas: ~{info.get('num_paginas', 0)}")
-                st.text(f"Chunks: {info.get('num_chunks', 0)}")
-                st.text(f"Tokens: ~{info.get('estimated_tokens', 0):,}")
-                
-                st.markdown("---")
-            except Exception as e:
-                logger.error(f"Erro ao obter info do documento: {e}")
+            st.markdown("**📄 Documento Atual:**")
+            st.text(f"• Tipo: {info['tipo']}")
+            st.text(f"• Tamanho: {info['tamanho']:,} chars")
+            st.text(f"• Páginas: ~{info['num_paginas']}")
+            st.text(f"• Chunks: {info['num_chunks']}")
+            st.text(f"• Tokens: ~{info['estimated_tokens']:,}")
+            
+            st.markdown("---")
         
-        # Configurações de chunking
-        st.caption("**Tamanho dos Chunks**")
+        # Configurações de processamento
+        st.markdown("**🔧 Processamento:**")
+        
         chunk_size = st.slider(
-            "Caracteres por chunk",
-            min_value=AppConfig.MIN_CHUNK_SIZE,
-            max_value=AppConfig.MAX_CHUNK_SIZE,
-            value=safe_session_state_get('chunk_size', AppConfig.DEFAULT_CHUNK_SIZE),
+            "Tamanho dos chunks",
+            min_value=config.MIN_CHUNK_SIZE,
+            max_value=config.MAX_CHUNK_SIZE,
+            value=st.session_state.get('chunk_size', config.DEFAULT_CHUNK_SIZE),
             step=500,
-            help="Chunks menores = menos tokens, mas podem perder contexto"
+            help="Chunks maiores = mais contexto, mas mais tokens"
         )
-        safe_session_state_set('chunk_size', chunk_size)
+        st.session_state['chunk_size'] = chunk_size
         
-        chunk_overlap = st.slider(
-            "Sobreposição",
-            min_value=0,
-            max_value=500,
-            value=safe_session_state_get('chunk_overlap', AppConfig.DEFAULT_CHUNK_OVERLAP),
-            step=50,
-            help="Overlap entre chunks para manter continuidade"
-        )
-        safe_session_state_set('chunk_overlap', chunk_overlap)
-        
-        st.caption("**Recuperação de Contexto**")
         k_chunks = st.slider(
             "Chunks por consulta",
-            min_value=AppConfig.MIN_K_CHUNKS,
-            max_value=AppConfig.MAX_K_CHUNKS,
-            value=safe_session_state_get('k_chunks', AppConfig.DEFAULT_K_CHUNKS),
+            min_value=config.MIN_K_CHUNKS,
+            max_value=config.MAX_K_CHUNKS,
+            value=st.session_state.get('k_chunks', config.DEFAULT_K_CHUNKS),
             step=1,
             help="Mais chunks = mais contexto, mas mais tokens"
         )
-        safe_session_state_set('k_chunks', k_chunks)
+        st.session_state['k_chunks'] = k_chunks
         
-        # Opção de usar embeddings (experimental)
-        st.caption("**Recursos Experimentais**")
+        # Opção de embeddings (requer recursos adicionais)
         use_embeddings = st.checkbox(
-            "Usar busca vetorial",
-            value=safe_session_state_get('use_embeddings', False),
-            help="⚠️ Requer mais memória, mas melhora a precisão"
+            "Usar busca vetorial (embeddings)",
+            value=st.session_state.get('use_embeddings', False),
+            help="Melhora a recuperação, mas usa mais recursos"
         )
-        safe_session_state_set('use_embeddings', use_embeddings)
+        st.session_state['use_embeddings'] = use_embeddings
+        
+        # Debug mode
+        show_debug = st.checkbox(
+            "Modo debug",
+            value=st.session_state.get('show_debug', False),
+            help="Mostrar informações de debug durante o processamento"
+        )
+        st.session_state['show_debug'] = show_debug
     
-    # Botões de ação
+    # === TAB: ESTATÍSTICAS ===
+    with tabs[3]:
+        st.subheader("📊 Estatísticas de Uso")
+        
+        total_queries = st.session_state.get('total_queries', 0)
+        tokens_used = st.session_state.get('tokens_used', 0)
+        cost = st.session_state.get('cost_accumulated', 0.0)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Perguntas", total_queries)
+            st.metric("Tokens", f"{tokens_used:,}")
+        with col2:
+            st.metric("Custo estimado", f"${cost:.4f}")
+            if 'documento_carregado' in st.session_state:
+                st.metric("Documento", "✅ Carregado")
+        
+        if st.button("Resetar estatísticas", use_container_width=True):
+            st.session_state['total_queries'] = 0
+            st.session_state['tokens_used'] = 0
+            st.session_state['cost_accumulated'] = 0.0
+            st.rerun()
+    
+    # === BOTÕES DE AÇÃO ===
     st.sidebar.markdown("---")
     col1, col2 = st.sidebar.columns(2)
     
     with col1:
         if st.button('🚀 Inicializar', use_container_width=True, type="primary"):
-            if not arquivo:
-                st.sidebar.error("❌ Selecione um documento primeiro!")
-            elif not api_key:
-                st.sidebar.error("❌ Adicione sua API key!")
-            else:
-                with st.spinner("Processando..."):
-                    carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
+            with st.spinner("⚙️ Processando..."):
+                carrega_modelo(provedor, modelo, api_key, tipo_arquivo, arquivo)
     
     with col2:
-        if st.button('🗑️ Limpar', use_container_width=True):
-            # Limpar apenas o histórico do chat
+        if st.button('🗑️ Limpar Chat', use_container_width=True):
             st.session_state['memoria'] = ConversationBufferMemory()
-            st.session_state['messages_count'] = 0
             st.sidebar.success("✅ Chat limpo!")
             st.rerun()
     
-    # Botão para reiniciar completamente
-    if st.sidebar.button('🔄 Novo Documento', use_container_width=True):
-        # Limpar tudo exceto API keys
-        keys_to_keep = [k for k in st.session_state.keys() if k.startswith('api_key_')]
-        keys_to_remove = [k for k in st.session_state.keys() if k not in keys_to_keep]
+    # Botão para novo documento
+    if st.sidebar.button('📄 Novo Documento', use_container_width=True):
+        # Limpar tudo relacionado ao documento
+        keys_to_clear = [
+            'chain', 'documento_completo', 'doc_memory_manager',
+            'doc_chunks', 'vector_store', 'documento_carregado',
+            'memoria', 'tamanho_documento', 'tipo_arquivo'
+        ]
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
         
-        for key in keys_to_remove:
-            del st.session_state[key]
-        
-        initialize_session_state()
-        st.sidebar.success("✅ Sistema reiniciado!")
+        st.session_state['memoria'] = ConversationBufferMemory()
+        st.sidebar.success("✅ Pronto para novo documento!")
         st.rerun()
     
-    # Informações adicionais na sidebar
+    # === INFORMAÇÕES DO PROJETO ===
     st.sidebar.markdown("---")
-    st.sidebar.caption("**📈 Estatísticas da Sessão**")
+    st.sidebar.caption("SOBRE")
+    st.sidebar.info("""
+    **Analyse Doc** v2.0
     
-    if safe_session_state_get('chain') is not None:
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            st.metric("Consultas", safe_session_state_get('total_queries', 0))
-        with col2:
-            st.metric("Mensagens", safe_session_state_get('messages_count', 0))
+    Análise inteligente de documentos com IA
     
-    # Footer
-    st.sidebar.markdown("---")
-    st.sidebar.caption("**ℹ️ Sobre**")
-    st.sidebar.info(
-        "**Analyse Doc**\n\n"
-        "Análise inteligente de documentos com IA\n\n"
-        "Desenvolvido por Allan Cardoso"
-    )
+    Desenvolvido com Streamlit + LangChain
+    """)
 
 
 def main():
     """Função principal."""
-    # Inicializar estado da sessão
-    initialize_session_state()
+    # Inicializar sessão
+    inicializar_sessao()
     
-    # Renderizar sidebar
+    # Criar sidebar
     sidebar()
     
-    # Renderizar página de chat
+    # Página principal
     pagina_chat()
 
 
