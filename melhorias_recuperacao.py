@@ -98,7 +98,7 @@ Use essas informações para responder sobre a estrutura geral do documento.
                 if conteudo_cap and not conteudo_cap.startswith("Capítulo"):
                     contexto_adicional = f"""
 CONTEÚDO COMPLETO DO CAPÍTULO {numero_cap}:
-{conteudo_cap[:5000]}  # Limitar para não exceder tokens
+{conteudo_cap[:5000]}
 
 Use ESTE conteúdo para responder sobre o capítulo {numero_cap}.
 """
@@ -160,11 +160,19 @@ Use ESTE conteúdo para responder sobre o capítulo {numero_cap}.
         """Extrai o número do capítulo da query."""
         query_lower = query.lower()
         
-        # Números escritos por extenso
+        # Números escritos por extenso (formas masculinas e femininas)
         numeros_extenso = {
-            'primeiro': 1, 'segunda': 2, 'terceiro': 3, 'quarto': 4,
-            'quinto': 5, 'sexto': 6, 'sétimo': 7, 'oitavo': 8,
-            'nono': 9, 'décimo': 10, 'último': -1, 'ultima': -1
+            'primeiro': 1, 'primeira': 1,
+            'segundo': 2, 'segunda': 2,
+            'terceiro': 3, 'terceira': 3,
+            'quarto': 4, 'quarta': 4,
+            'quinto': 5, 'quinta': 5,
+            'sexto': 6, 'sexta': 6,
+            'sétimo': 7, 'sétima': 7,
+            'oitavo': 8, 'oitava': 8,
+            'nono': 9, 'nona': 9,
+            'décimo': 10, 'décima': 10,
+            'último': -1, 'ultima': -1, 'última': -1
         }
         
         for palavra, numero in numeros_extenso.items():

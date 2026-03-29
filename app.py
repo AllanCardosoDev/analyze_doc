@@ -114,6 +114,8 @@ def carrega_arquivos(tipo_arquivo: str, arquivo) -> tuple[str, str]:
                 return carrega_csv(temp_path)
             elif tipo_arquivo == "Txt":
                 return carrega_txt(temp_path)
+            else:
+                return "", f"❌ Tipo de arquivo não suportado: {tipo_arquivo}"
         finally:
             # Sempre remover arquivo temporário
             try:
@@ -566,17 +568,17 @@ def pagina_chat():
             with st.spinner("🤔 Analisando documento e preparando resposta..."):
                 with chat_container:
                     resposta_container = st.empty()
+                    resposta_completa = ""
                     
                     # Processar com streaming
                     for resposta_parcial in processar_pergunta_com_documento(
                         input_usuario, chain, memoria
                     ):
+                        resposta_completa = resposta_parcial
                         resposta_container.markdown(
-                            f'<div class="chat-message-ai">🤖 {resposta_parcial}</div>',
+                            f'<div class="chat-message-ai">🤖 {resposta_completa}</div>',
                             unsafe_allow_html=True
                         )
-                    
-                    resposta_completa = resposta_parcial
             
             # Adicionar à memória
             memoria.chat_memory.add_user_message(input_usuario)
