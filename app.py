@@ -8,11 +8,11 @@ import os
 import logging
 from typing import Generator, Optional
 import streamlit as st
-from langchain.memory import ConversationBufferMemory
+from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, AIMessage
 
 from loaders import (
     carrega_site,
@@ -58,7 +58,7 @@ model_config = ModelConfig()
 def inicializar_sessao():
     """Inicializa as variáveis de sessão necessárias."""
     defaults = {
-        "memoria": ConversationBufferMemory(),
+        "memoria": ChatMessageHistory(),
         "doc_memory_manager": None,
         "chain": None,
         "documento_carregado": False,
@@ -328,7 +328,7 @@ INSTRUÇÕES:
 def processar_pergunta_com_documento(
     input_usuario: str, 
     chain, 
-    memoria: ConversationBufferMemory
+    memoria: ChatMessageHistory
 ) -> Generator[str, None, None]:
     """
     Processa perguntas usando chunks relevantes do documento de forma otimizada.
@@ -436,7 +436,7 @@ IMPORTANTE:
         resposta_completa = ""
         for chunk in chain.stream({
             "input": pergunta_completa,
-            "chat_history": memoria.buffer_as_messages
+            "chat_history": memoria.messages
         }):
             if hasattr(chunk, 'content'):
                 resposta_completa += chunk.content
@@ -534,14 +534,14 @@ def pagina_chat():
         st.stop()
     
     # Chat ativo
-    memoria = st.session_state.get('memoria', ConversationBufferMemory())
+    memoria = st.session_state.get('memoria', ChatMessageHistory())
     
     # Container para mensagens
     chat_container = st.container()
     
     with chat_container:
         # Exibir histórico
-        for mensagem in memoria.buffer_as_messages:
+        for mensagem in memoria.messages:
             if mensagem.type == 'ai':
                 st.markdown(
                     f'<div class="chat-message-ai">🤖 {mensagem.content}</div>', 
@@ -581,8 +581,8 @@ def pagina_chat():
                         )
             
             # Adicionar à memória
-            memoria.chat_memory.add_user_message(input_usuario)
-            memoria.chat_memory.add_ai_message(resposta_completa)
+            memoria.add_user_message(input_usuario)
+            memoria.add_ai_message(resposta_completa)
             st.session_state['memoria'] = memoria
             
         except Exception as e:
@@ -774,9 +774,8 @@ def sidebar():
     
     with col2:
         if st.button('🗑️ Limpar Chat', use_container_width=True):
-            st.session_state['memoria'] = ConversationBufferMemory()
+            st.session_state['memoria'] = ChatMessageHistory()
             st.sidebar.success("✅ Chat limpo!")
-            st.rerun()
     
     # Botão para novo documento
     if st.sidebar.button('📄 Novo Documento', use_container_width=True):
@@ -791,7 +790,7 @@ def sidebar():
             if key in st.session_state:
                 del st.session_state[key]
         
-        st.session_state['memoria'] = ConversationBufferMemory()
+        st.session_state['memoria'] = ChatMessageHistory()
         st.sidebar.success("✅ Pronto para novo documento!")
         st.rerun()
     

@@ -3,7 +3,7 @@ Sistema melhorado de recuperação de informações com contexto estrutural.
 """
 import re
 from typing import List, Dict, Optional, Tuple
-from langchain.schema import Document
+from langchain_core.documents import Document
 import streamlit as st
 import logging
 

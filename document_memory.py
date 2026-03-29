@@ -4,8 +4,8 @@ Implementa chunking, indexação vetorial opcional e recuperação inteligente.
 """
 import logging
 import streamlit as st
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 import os
