@@ -4,10 +4,10 @@ Implementa chunking, indexação vetorial opcional e recuperação inteligente.
 """
 import logging
 import streamlit as st
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 import os
 import tempfile
 import hashlib
@@ -376,7 +376,7 @@ class DocumentMemoryManager:
             "chunk_overlap": st.session_state.get("chunk_overlap_used", self.config.DEFAULT_CHUNK_OVERLAP),
             "doc_hash": st.session_state.get("doc_hash", ""),
             "using_embeddings": self.use_embeddings and "vector_store" in st.session_state,
-            "estimated_tokens": estimate_tokens(str(st.session_state.get("tamanho_documento", 0)))
+            "estimated_tokens": st.session_state.get("tamanho_documento", 0) // 4  # ~4 chars per token
         }
         return info
     
